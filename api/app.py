@@ -372,8 +372,19 @@ def wpp_status(user=Depends(get_current_user)):
         return {"connected": False, "number": ""}
 
 @app.get("/whatsapp/qrcode")
-def wpp_qrcode(user=Depends(get_current_user)):
-    return {"url": f"{BAILEYS_URL}/qrcode"}
+async def wpp_qrcode(user=Depends(get_current_user)):
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(f"{BAILEYS_URL}/qrcode")
+            # Baileys retorna HTML com a imagem base64
+            html = r.text
+            import re
+            match = re.search(r'src="(data:image[^"]+)"', html)
+            if match:
+                return {"qr": match.group(1)}
+            return {"qr": None}
+    except:
+        return {"qr": None}
 
 # ─────────────────────────────────────────
 #  ANALYTICS
