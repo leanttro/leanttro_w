@@ -1,0 +1,56 @@
+version: '3.8'
+
+services:
+
+  baileys:
+    build: ./baileys
+    restart: always
+    ports:
+      - "3001:3000"
+    volumes:
+      - wpp_session:/app/auth_info_final
+    environment:
+      - TYPEBOT_URL=${TYPEBOT_URL}
+      - API_WEBHOOK_URL=http://api:8000/webhook/mensagem
+
+  api:
+    build: ./api
+    restart: always
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - SECRET_KEY=${SECRET_KEY}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - BAILEYS_URL=http://baileys:3000
+      - REDIS_URL=redis://redis:6379
+
+  worker:
+    build: ./api
+    restart: always
+    command: python fila.py
+    depends_on:
+      - redis
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - BAILEYS_URL=http://baileys:3000
+      - REDIS_URL=redis://redis:6379
+
+  frontend:
+    build: ./frontend
+    restart: always
+    ports:
+      - "80:80"
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    volumes:
+      - redis_data:/data
+
+volumes:
+  wpp_session:
+  redis_data:
