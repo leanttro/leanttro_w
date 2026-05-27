@@ -14,6 +14,8 @@ services:
     environment:
       - TYPEBOT_URL=${TYPEBOT_URL}
       - API_WEBHOOK_URL=http://api:8000/webhook/mensagem
+    networks:
+      - dokploy-network
 
   api:
     build:
@@ -30,20 +32,14 @@ services:
       - GROQ_API_KEY=${GROQ_API_KEY}
       - BAILEYS_URL=http://baileys:3000
       - REDIS_URL=redis://redis:6379
-
-  worker:
-    build:
-      context: .
-      dockerfile: Dockerfile.api
-    restart: always
-    command: python fila.py
-    depends_on:
-      - redis
-    environment:
-      - DATABASE_URL=${DATABASE_URL}
-      - GROQ_API_KEY=${GROQ_API_KEY}
-      - BAILEYS_URL=http://baileys:3000
-      - REDIS_URL=redis://redis:6379
+    networks:
+      - dokploy-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.wpp-api.rule=Host(`wpp.leanttro.com`)"
+      - "traefik.http.routers.wpp-api.entrypoints=websecure"
+      - "traefik.http.routers.wpp-api.tls.certresolver=letsencrypt"
+      - "traefik.http.services.wpp-api.loadbalancer.server.port=8000"
 
   frontend:
     build:
@@ -52,12 +48,26 @@ services:
     restart: always
     ports:
       - "8080:80"
+    networks:
+      - dokploy-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.wpp-frontend.rule=Host(`whatsapp.leanttro.com`)"
+      - "traefik.http.routers.wpp-frontend.entrypoints=websecure"
+      - "traefik.http.routers.wpp-frontend.tls.certresolver=letsencrypt"
+      - "traefik.http.services.wpp-frontend.loadbalancer.server.port=80"
 
   redis:
     image: redis:7-alpine
     restart: always
     volumes:
       - redis_data:/data
+    networks:
+      - dokploy-network
+
+networks:
+  dokploy-network:
+    external: true
 
 volumes:
   wpp_session:
