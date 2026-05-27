@@ -299,10 +299,15 @@ def criar_campaign(body: CampaignBody, user=Depends(get_current_user), conn=Depe
     return dict(camp)
 
 @app.patch("/campaigns/{campaign_id}/status")
-def atualizar_status_campaign(campaign_id: int, body: ContactStatusBody, user=Depends(get_current_user), conn=Depends(get_db)):
+async def atualizar_status_campaign(campaign_id: int, body: ContactStatusBody, user=Depends(get_current_user), conn=Depends(get_db)):
     db_exec(conn,
         "UPDATE campaigns SET status=%s, atualizado_em=NOW() WHERE id=%s AND usuario_id=%s",
         (body.status, campaign_id, user["id"]))
+    if body.status == 'ativa':
+        from fila import enfileirar_campanha
+        camp = db_one(conn, "SELECT * FROM campaigns WHERE id=%s AND usuario_id=%s", (campaign_id, user["id"]))
+        if camp:
+            await enfileirar_campanha(campaign_id, user["id"], camp["velocidade"], conn)
     return {"ok": True}
 
 @app.delete("/campaigns/{campaign_id}")
