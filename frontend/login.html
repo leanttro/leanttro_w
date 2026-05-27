@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Leanttro WPP</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg: #0f0f0f; --bg2: #1a1a1a; --bg3: #242424;
+      --border: #2e2e2e; --text: #f0f0f0; --text2: #888;
+      --accent: #7c3aed; --green: #22c55e; --red: #ef4444;
+    }
+    body { font-family: Arial, sans-serif; background: var(--bg); color: var(--text); font-size: 14px; }
+    .auth-page { min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+    .auth-box { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 40px; width: 100%; max-width: 400px; }
+    .logo { font-size: 13px; color: var(--accent); font-weight: bold; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 20px; }
+    h1 { font-size: 22px; margin-bottom: 4px; }
+    h1 + p { color: var(--text2); margin-bottom: 24px; font-size: 13px; }
+    .form-group { margin-bottom: 16px; }
+    label { display: block; font-size: 12px; color: var(--text2); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+    input { width: 100%; background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-family: Arial, sans-serif; font-size: 14px; padding: 10px 12px; outline: none; transition: border-color 0.2s; }
+    input:focus { border-color: var(--accent); }
+    .btn { display: flex; align-items: center; justify-content: center; width: 100%; padding: 10px; border-radius: 6px; border: none; font-family: Arial, sans-serif; font-size: 14px; font-weight: bold; cursor: pointer; background: var(--accent); color: #fff; margin-top: 4px; transition: opacity 0.2s; }
+    .btn:hover { opacity: 0.85; }
+    .link-row { margin-top: 16px; text-align: center; font-size: 13px; color: #888; }
+    a { color: var(--accent); text-decoration: none; }
+    .alert { padding: 10px 14px; border-radius: 6px; font-size: 13px; margin-bottom: 14px; background: #450a0a; border: 1px solid #7f1d1d; color: #fca5a5; }
+  </style>
+</head>
+<body>
+<div class="auth-page">
+  <div class="auth-box">
+    <div class="logo">Leanttro WPP</div>
+
+    <!-- LOGIN -->
+    <div id="tab-login">
+      <h1>Entrar</h1>
+      <p>Acesse sua conta</p>
+      <div id="login-alert"></div>
+      <div class="form-group"><label>Email</label><input type="email" id="login-email" placeholder="seu@email.com" /></div>
+      <div class="form-group"><label>Senha</label><input type="password" id="login-senha" placeholder="••••••••" /></div>
+      <button class="btn" onclick="fazerLogin()">Entrar</button>
+      <p class="link-row">Não tem conta? <a href="#" onclick="mostrarCadastro()">Cadastre-se</a></p>
+    </div>
+
+    <!-- CADASTRO -->
+    <div id="tab-cadastro" style="display:none">
+      <h1>Criar conta</h1>
+      <p>Comece a prospectar hoje</p>
+      <div id="cadastro-alert"></div>
+      <div class="form-group"><label>Nome</label><input type="text" id="cad-nome" placeholder="Seu nome" /></div>
+      <div class="form-group"><label>Email</label><input type="email" id="cad-email" placeholder="seu@email.com" /></div>
+      <div class="form-group"><label>Senha</label><input type="password" id="cad-senha" placeholder="••••••••" /></div>
+      <button class="btn" onclick="fazerCadastro()">Criar conta</button>
+      <p class="link-row">Já tem conta? <a href="#" onclick="mostrarLogin()">Entrar</a></p>
+    </div>
+  </div>
+</div>
+
+<script>
+  const API = 'http://213.199.56.207:8000';
+
+  if (localStorage.getItem('token')) window.location.href = 'dashboard.html';
+
+  function mostrarCadastro() {
+    document.getElementById('tab-login').style.display = 'none';
+    document.getElementById('tab-cadastro').style.display = 'block';
+  }
+  function mostrarLogin() {
+    document.getElementById('tab-cadastro').style.display = 'none';
+    document.getElementById('tab-login').style.display = 'block';
+  }
+  function setAlert(id, msg) {
+    document.getElementById(id).innerHTML = msg ? `<div class="alert">${msg}</div>` : '';
+  }
+  async function fazerLogin() {
+    const email = document.getElementById('login-email').value.trim();
+    const senha = document.getElementById('login-senha').value;
+    if (!email || !senha) return setAlert('login-alert', 'Preencha todos os campos');
+    try {
+      const r = await fetch(`${API}/auth/login`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({email, senha}) });
+      const d = await r.json();
+      if (!r.ok) return setAlert('login-alert', d.detail || 'Erro ao entrar');
+      localStorage.setItem('token', d.token);
+      localStorage.setItem('user', JSON.stringify(d.user));
+      window.location.href = 'dashboard.html';
+    } catch(e) { setAlert('login-alert', 'Erro de conexão com a API'); }
+  }
+  async function fazerCadastro() {
+    const nome = document.getElementById('cad-nome').value.trim();
+    const email = document.getElementById('cad-email').value.trim();
+    const senha = document.getElementById('cad-senha').value;
+    if (!nome || !email || !senha) return setAlert('cadastro-alert', 'Preencha todos os campos');
+    try {
+      const r = await fetch(`${API}/auth/register`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({nome, email, senha}) });
+      const d = await r.json();
+      if (!r.ok) return setAlert('cadastro-alert', d.detail || 'Erro ao cadastrar');
+      localStorage.setItem('token', d.token);
+      localStorage.setItem('user', JSON.stringify(d.user));
+      window.location.href = 'dashboard.html';
+    } catch(e) { setAlert('cadastro-alert', 'Erro de conexão com a API'); }
+  }
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return;
+    document.getElementById('tab-login').style.display !== 'none' ? fazerLogin() : fazerCadastro();
+  });
+</script>
+</body>
+</html>
