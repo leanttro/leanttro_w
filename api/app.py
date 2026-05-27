@@ -1,42 +1,43 @@
 """
-PROSPECTOR IA — Backend FastAPI
+PROSPECTOR IA — Backend unificado (app.py + ia.py + fila.py)
 """
-import os, json, csv, io, bcrypt
-from datetime import datetime, timedelta
+import os, json, csv, io, bcrypt, re, asyncio
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, date, time
 from typing import Optional
 
 import psycopg2
 import psycopg2.extras
-from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, status
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 import jwt
 import httpx
+import redis.asyncio as aioredis
 
 # ─────────────────────────────────────────
 #  CONFIG
 # ─────────────────────────────────────────
-SECRET_KEY   = os.getenv("SECRET_KEY", "troca-isso-em-producao")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")           # sua chave padrão
-BAILEYS_URL  = os.getenv("BAILEYS_URL", "http://baileys:3000")
-ALGORITHM    = "HS256"
-TOKEN_EXP    = 24  # horas
-
-DB_URL = os.getenv("DATABASE_URL",
+SECRET_KEY      = os.getenv("SECRET_KEY", "troca-isso-em-producao")
+GROQ_API_KEY    = os.getenv("GROQ_API_KEY", "")
+BAILEYS_URL     = os.getenv("BAILEYS_URL", "http://baileys:3000")
+ALGORITHM       = "HS256"
+TOKEN_EXP       = 24  # horas
+DB_URL          = os.getenv("DATABASE_URL",
     "postgresql://leanttro:Fin@2021@wpp-wpp-a3wnej:5432/postgres")
-
-app = FastAPI(title="Prospector IA", version="1.0.0")
-app.add_middleware(CORSMiddleware,
-    allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
-
-security = HTTPBearer()
+REDIS_URL       = os.getenv("REDIS_URL", "redis://redis:6379")
+GROQ_API_URL    = "https://api.groq.com/openai/v1/chat/completions"
+GATILHOS_PARADA_PADRAO = ["não quero", "nao quero", "para", "chega", "sai", "remove", "cancelar"]
 
 # ─────────────────────────────────────────
 #  BANCO
 # ─────────────────────────────────────────
+def get_conn_raw():
+    return psycopg2.connect(DB_URL, cursor_factory=psycopg2.extras.RealDictCursor)
+
 def get_db():
-    conn = psycopg2.connect(DB_URL, cursor_factory=psycopg2.extras.RealDictCursor)
+    conn = get_conn_raw()
     try:
         yield conn
     finally:
@@ -62,6 +63,8 @@ def db_exec(conn, sql, params=()):
 # ─────────────────────────────────────────
 #  AUTH HELPERS
 # ─────────────────────────────────────────
+security = HTTPBearer()
+
 def criar_token(user_id: int, email: str) -> str:
     payload = {
         "sub": str(user_id),
@@ -146,6 +149,423 @@ class SendMessageBody(BaseModel):
     midia_tipo: Optional[str] = None
 
 # ─────────────────────────────────────────
+#  IA — helpers
+# ─────────────────────────────────────────
+def get_groq_key(usuario: dict) -> str:
+    if usuario.get("usar_ia_propria") and usuario.get("groq_key"):
+        return usuario["groq_key"]
+    return GROQ_API_KEY
+
+def checar_gatilho_parada(texto: str, gatilhos_str: str) -> bool:
+    texto_lower = texto.lower()
+    gatilhos = GATILHOS_PARADA_PADRAO[:]
+    if gatilhos_str:
+        gatilhos += [g.strip().lower() for g in gatilhos_str.split(",")]
+    return any(g in texto_lower for g in gatilhos)
+
+def checar_pedido_responsavel(texto: str) -> bool:
+    sinais = ["responsável", "responsavel", "decisor", "quem decide", "falar com"]
+    return any(s in texto.lower() for s in sinais)
+
+def checar_telefone_na_resposta(texto: str):
+    match = re.search(r"(\+?\d[\d\s\-\(\)]{8,15}\d)", texto)
+    return match.group(1).strip() if match else None
+
+def montar_system_prompt(cfg: dict, usuario: dict) -> str:
+    persona   = cfg.get("persona_nome") or "Assistente"
+    produto   = cfg.get("produto_nome") or "nosso serviço"
+    descricao = cfg.get("produto_descricao") or ""
+    preco     = cfg.get("produto_preco") or ""
+    prompt    = cfg.get("prompt_sistema") or ""
+
+    base = f"""Você é {persona}, assistente de vendas especialista.
+Seu objetivo é prospectar clientes e vender: {produto}.
+{f'Descrição: {descricao}' if descricao else ''}
+{f'Preço: {preco}' if preco else ''}
+
+Instruções importantes:
+- Seja natural, humano e objetivo
+- Se a pessoa não for o decisor/responsável, pergunte educadamente pelo número ou nome do responsável
+- Se identificar interesse real, aprofunde a conversa e tente fechar
+- Seja breve nas mensagens (máximo 3 parágrafos)
+- Nunca mande listas longas ou textos enormes
+- Se a pessoa pedir para parar, agradeça e encerre
+
+{prompt}"""
+    return base.strip()
+
+async def chamar_groq(system_prompt: str, historico: list, groq_key: str, temperatura: float, modelo: str) -> str:
+    messages = [{"role": "system", "content": system_prompt}]
+    for msg in historico[-10:]:
+        role = "assistant" if msg["role"] == "assistant" else "user"
+        messages.append({"role": role, "content": msg["content"] or ""})
+
+    headers = {
+        "Authorization": f"Bearer {groq_key}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": modelo or "llama3-8b-8192",
+        "temperature": float(temperatura or 0.7),
+        "max_tokens": 500,
+        "messages": messages
+    }
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(GROQ_API_URL, headers=headers, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+        return data["choices"][0]["message"]["content"].strip()
+
+async def enviar_whatsapp(numero: str, texto: str = None, midia_url: str = None, midia_tipo: str = None, caption: str = None):
+    payload = {"number": numero, "message": texto or caption or ""}
+    if midia_url:
+        if midia_tipo == "video":
+            payload["videoUrl"] = midia_url
+        else:
+            payload["imageUrl"] = midia_url
+    async with httpx.AsyncClient(timeout=15) as client:
+        await client.post(f"{BAILEYS_URL}/disparar", json=payload)
+
+# ─────────────────────────────────────────
+#  IA — processador de mensagens (ex ia.py)
+# ─────────────────────────────────────────
+async def processar_mensagem(payload: dict, conn):
+    usuario_id = payload.get("usuario_id")
+    jid        = payload.get("remoteJid", "")
+    texto      = payload.get("text", "") or ""
+    from_me    = payload.get("fromMe", False)
+
+    if from_me or not texto or not usuario_id:
+        return
+
+    numero = jid.replace("@s.whatsapp.net", "")
+
+    usuario = db_one(conn, "SELECT * FROM usuarios WHERE id = %s", (usuario_id,))
+    if not usuario:
+        return
+    usuario = dict(usuario)
+
+    cfg = db_one(conn, "SELECT * FROM ai_config WHERE usuario_id = %s", (usuario_id,))
+    if not cfg:
+        return
+    cfg = dict(cfg)
+
+    # Verifica horário de funcionamento
+    agora = datetime.now().time()
+    try:
+        h_ini = time.fromisoformat(str(cfg.get("horario_inicio", "08:00")))
+        h_fim = time.fromisoformat(str(cfg.get("horario_fim", "18:00")))
+        if not (h_ini <= agora <= h_fim):
+            return
+    except:
+        pass
+
+    # Busca ou cria conversa
+    conv = db_one(conn, "SELECT * FROM conversations WHERE usuario_id=%s AND jid=%s", (usuario_id, jid))
+    if not conv:
+        contact = db_one(conn, "SELECT id FROM contacts WHERE usuario_id=%s AND telefone=%s", (usuario_id, numero))
+        contact_id = contact["id"] if contact else None
+        conv = db_exec(conn,
+            "INSERT INTO conversations (usuario_id, contact_id, jid, status, modo) VALUES (%s,%s,%s,'ativa','ia') RETURNING *",
+            (usuario_id, contact_id, jid))
+    conv = dict(conv)
+
+    if conv.get("modo") == "manual":
+        return
+
+    db_exec(conn,
+        "INSERT INTO messages (conversation_id, role, content) VALUES (%s,'user',%s)",
+        (conv["id"], texto))
+
+    if checar_gatilho_parada(texto, cfg.get("gatilhos_parada", "")):
+        db_exec(conn,
+            "UPDATE conversations SET status='encerrada', atualizado_em=NOW() WHERE id=%s",
+            (conv["id"],))
+        db_exec(conn,
+            "UPDATE contacts SET status='perdido', atualizado_em=NOW() WHERE usuario_id=%s AND telefone=%s",
+            (usuario_id, numero))
+        return
+
+    ultima_nossa = db_one(conn,
+        "SELECT content FROM messages WHERE conversation_id=%s AND role='assistant' ORDER BY timestamp DESC LIMIT 1",
+        (conv["id"],))
+    if ultima_nossa and checar_pedido_responsavel(ultima_nossa["content"] or ""):
+        tel_resp = checar_telefone_na_resposta(texto)
+        if tel_resp:
+            db_exec(conn,
+                "UPDATE contacts SET responsavel_telefone=%s, atualizado_em=NOW() WHERE usuario_id=%s AND telefone=%s",
+                (tel_resp, usuario_id, numero))
+            db_exec(conn,
+                "INSERT INTO contacts (usuario_id, nome, telefone, notas, status) VALUES (%s,%s,%s,%s,'pendente') ON CONFLICT DO NOTHING",
+                (usuario_id, "Responsável via " + numero, tel_resp, f"Indicado por {numero}"))
+
+    historico = db_all(conn,
+        "SELECT role, content FROM messages WHERE conversation_id=%s ORDER BY timestamp ASC",
+        (conv["id"],))
+    historico = [dict(h) for h in historico]
+
+    groq_key      = get_groq_key(usuario)
+    system_prompt = montar_system_prompt(cfg, usuario)
+    temperatura   = float(cfg.get("temperatura") or 0.7)
+    modelo        = cfg.get("modelo") or "llama3-8b-8192"
+
+    try:
+        resposta = await chamar_groq(system_prompt, historico, groq_key, temperatura, modelo)
+    except Exception as e:
+        print(f"Erro Groq: {e}")
+        return
+
+    delay = int(cfg.get("delay_mensagens") or 3)
+    await asyncio.sleep(min(delay, 10))
+
+    await enviar_whatsapp(numero, texto=resposta)
+
+    db_exec(conn,
+        "INSERT INTO messages (conversation_id, role, content) VALUES (%s,'assistant',%s)",
+        (conv["id"], resposta))
+    db_exec(conn,
+        "UPDATE conversations SET atualizado_em=NOW() WHERE id=%s",
+        (conv["id"],))
+
+    sinais_interesse = ["quero", "interesse", "como funciona", "valor", "preço", "quanto custa", "me conta mais"]
+    if any(s in texto.lower() for s in sinais_interesse):
+        midia_url  = cfg.get("midia_fechamento_url")
+        midia_tipo = cfg.get("midia_fechamento_tipo")
+        caption    = cfg.get("midia_fechamento_caption")
+        if midia_url:
+            await asyncio.sleep(2)
+            await enviar_whatsapp(numero, midia_url=midia_url, midia_tipo=midia_tipo, caption=caption)
+
+    hoje = date.today()
+    db_exec(conn, """
+        INSERT INTO analytics_daily (usuario_id, data, msgs_enviadas, msgs_recebidas)
+        VALUES (%s, %s, 1, 1)
+        ON CONFLICT (usuario_id, data) DO UPDATE SET
+            msgs_enviadas  = analytics_daily.msgs_enviadas  + 1,
+            msgs_recebidas = analytics_daily.msgs_recebidas + 1
+    """, (usuario_id, hoje))
+
+# ─────────────────────────────────────────
+#  FILA — workers (ex fila.py)
+# ─────────────────────────────────────────
+async def gerar_mensagem_abertura(cfg: dict, contato: dict, groq_key: str) -> str:
+    nome    = contato.get("nome") or "prezado"
+    empresa = contato.get("empresa") or ""
+    produto = cfg.get("produto_nome") or "nosso serviço"
+    persona = cfg.get("persona_nome") or "Assistente"
+    prompt  = cfg.get("prompt_sistema") or ""
+
+    system = f"""Você é {persona}, especialista em vendas.
+{prompt}
+Crie uma PRIMEIRA mensagem de prospecção no WhatsApp para {nome}{f' da empresa {empresa}' if empresa else ''}.
+Ofereça: {produto}
+Regras: seja natural, curto (máx 3 linhas), não pareça spam, personalize pelo nome/empresa."""
+
+    headers = {"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"}
+    payload = {
+        "model": cfg.get("modelo") or "llama3-8b-8192",
+        "temperature": float(cfg.get("temperatura") or 0.7),
+        "max_tokens": 200,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user",   "content": "Gere a mensagem de abertura agora."}
+        ]
+    }
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(GROQ_API_URL, headers=headers, json=payload)
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"].strip()
+
+
+async def processar_contato_campanha(campaign_id: int, contact_id: int, usuario_id: int):
+    conn = get_conn_raw()
+    try:
+        usuario = dict(db_one(conn, "SELECT * FROM usuarios WHERE id=%s", (usuario_id,)))
+        cfg     = dict(db_one(conn, "SELECT * FROM ai_config WHERE usuario_id=%s", (usuario_id,)) or {})
+        contato = dict(db_one(conn, "SELECT * FROM contacts WHERE id=%s", (contact_id,)) or {})
+
+        if not contato or not cfg:
+            return
+
+        agora = datetime.now().time()
+        try:
+            h_ini = time.fromisoformat(str(cfg.get("horario_inicio", "08:00")))
+            h_fim = time.fromisoformat(str(cfg.get("horario_fim", "18:00")))
+            if not (h_ini <= agora <= h_fim):
+                await asyncio.sleep(1800)
+        except:
+            pass
+
+        numero = contato["telefone"].strip().replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+        if not numero.startswith("+"):
+            numero = "55" + numero
+
+        groq_key = usuario.get("groq_key") if usuario.get("usar_ia_propria") else GROQ_API_KEY
+
+        msg_abertura = await gerar_mensagem_abertura(cfg, contato, groq_key)
+        await enviar_whatsapp(numero, texto=msg_abertura)
+
+        if cfg.get("midia_abertura_url"):
+            await asyncio.sleep(2)
+            await enviar_whatsapp(
+                numero,
+                midia_url=cfg["midia_abertura_url"],
+                midia_tipo=cfg.get("midia_abertura_tipo"),
+                caption=cfg.get("midia_abertura_caption")
+            )
+
+        jid  = f"{numero}@s.whatsapp.net"
+        conv = db_exec(conn,
+            "INSERT INTO conversations (usuario_id, contact_id, campaign_id, jid, status, modo) VALUES (%s,%s,%s,%s,'ativa','ia') RETURNING *",
+            (usuario_id, contact_id, campaign_id, jid))
+
+        db_exec(conn,
+            "INSERT INTO messages (conversation_id, role, content) VALUES (%s,'assistant',%s)",
+            (conv["id"], msg_abertura))
+
+        db_exec(conn,
+            "UPDATE contacts SET status='em_contato', atualizado_em=NOW() WHERE id=%s",
+            (contact_id,))
+        db_exec(conn,
+            "UPDATE campaign_contacts SET status='enviado', enviado_em=NOW() WHERE campaign_id=%s AND contact_id=%s",
+            (campaign_id, contact_id))
+        db_exec(conn,
+            "UPDATE campaigns SET enviados=enviados+1, atualizado_em=NOW() WHERE id=%s",
+            (campaign_id,))
+
+        max_fu     = int(cfg.get("max_followups") or 2)
+        intervalo  = int(cfg.get("intervalo_followup") or 24)
+        for i in range(1, max_fu + 1):
+            agendado = datetime.now() + timedelta(hours=intervalo * i)
+            db_exec(conn,
+                "INSERT INTO followups (conversation_id, agendado_para) VALUES (%s,%s)",
+                (conv["id"], agendado))
+
+        hoje = date.today()
+        db_exec(conn, """
+            INSERT INTO analytics_daily (usuario_id, data, abordados, msgs_enviadas)
+            VALUES (%s, %s, 1, 1)
+            ON CONFLICT (usuario_id, data) DO UPDATE SET
+                abordados     = analytics_daily.abordados     + 1,
+                msgs_enviadas = analytics_daily.msgs_enviadas + 1
+        """, (usuario_id, hoje))
+
+    except Exception as e:
+        print(f"Erro ao processar contato {contact_id}: {e}")
+    finally:
+        conn.close()
+
+
+async def enfileirar_campanha(campaign_id: int, usuario_id: int, velocidade: int, conn):
+    redis = await aioredis.from_url(REDIS_URL)
+    contatos = db_all(conn, """
+        SELECT cc.contact_id FROM campaign_contacts cc
+        WHERE cc.campaign_id=%s AND cc.status='pendente'
+    """, (campaign_id,))
+
+    for c in contatos:
+        job = json.dumps({
+            "campaign_id": campaign_id,
+            "contact_id":  c["contact_id"],
+            "usuario_id":  usuario_id,
+            "velocidade":  velocidade
+        })
+        await redis.rpush("fila_campanha", job)
+
+    await redis.aclose()
+    return len(contatos)
+
+
+async def worker_campanhas():
+    redis = await aioredis.from_url(REDIS_URL)
+    print("🔄 Worker de campanhas iniciado")
+    while True:
+        try:
+            job = await redis.blpop("fila_campanha", timeout=5)
+            if not job:
+                continue
+            data        = json.loads(job[1])
+            campaign_id = data["campaign_id"]
+            contact_id  = data["contact_id"]
+            usuario_id  = data["usuario_id"]
+            velocidade  = data.get("velocidade", 60)
+
+            await processar_contato_campanha(campaign_id, contact_id, usuario_id)
+            await asyncio.sleep(velocidade)
+
+        except Exception as e:
+            print(f"Erro no worker: {e}")
+            await asyncio.sleep(5)
+
+
+async def worker_followups():
+    print("🔔 Worker de follow-ups iniciado")
+    while True:
+        conn = get_conn_raw()
+        try:
+            pendentes = db_all(conn, """
+                SELECT f.*, c.jid, c.usuario_id
+                FROM followups f
+                JOIN conversations c ON c.id = f.conversation_id
+                WHERE f.enviado = FALSE AND f.agendado_para <= NOW()
+                ORDER BY f.agendado_para ASC
+                LIMIT 20
+            """)
+
+            for fu in pendentes:
+                fu      = dict(fu)
+                usuario = dict(db_one(conn, "SELECT * FROM usuarios WHERE id=%s", (fu["usuario_id"],)) or {})
+                cfg     = dict(db_one(conn, "SELECT * FROM ai_config WHERE usuario_id=%s", (fu["usuario_id"],)) or {})
+
+                if not cfg:
+                    continue
+
+                numero   = fu["jid"].replace("@s.whatsapp.net", "")
+                groq_key = usuario.get("groq_key") if usuario.get("usar_ia_propria") else GROQ_API_KEY
+
+                persona = cfg.get("persona_nome") or "Assistente"
+                produto = cfg.get("produto_nome") or "nosso serviço"
+                msg_fu  = f"Oi! Sou {persona}. Queria saber se você teve chance de pensar na proposta que te enviei sobre {produto}. Posso te ajudar com alguma dúvida? 😊"
+
+                try:
+                    await enviar_whatsapp(numero, texto=msg_fu)
+                    db_exec(conn,
+                        "INSERT INTO messages (conversation_id, role, content) VALUES (%s,'assistant',%s)",
+                        (fu["conversation_id"], msg_fu))
+                    db_exec(conn,
+                        "UPDATE followups SET enviado=TRUE, enviado_em=NOW() WHERE id=%s",
+                        (fu["id"],))
+                except Exception as e:
+                    print(f"Erro no follow-up {fu['id']}: {e}")
+
+        except Exception as e:
+            print(f"Erro no worker followup: {e}")
+        finally:
+            conn.close()
+
+        await asyncio.sleep(60)
+
+# ─────────────────────────────────────────
+#  LIFESPAN — inicia workers junto com o app
+# ─────────────────────────────────────────
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Sobe os dois workers em background ao iniciar o servidor
+    task_camp = asyncio.create_task(worker_campanhas())
+    task_fu   = asyncio.create_task(worker_followups())
+    yield
+    # Cancela ao encerrar
+    task_camp.cancel()
+    task_fu.cancel()
+
+# ─────────────────────────────────────────
+#  APP
+# ─────────────────────────────────────────
+app = FastAPI(title="Prospector IA", version="1.0.0", lifespan=lifespan)
+app.add_middleware(CORSMiddleware,
+    allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+# ─────────────────────────────────────────
 #  AUTH ROUTES
 # ─────────────────────────────────────────
 @app.post("/auth/register")
@@ -153,7 +573,7 @@ def register(body: RegisterBody, conn=Depends(get_db)):
     existe = db_one(conn, "SELECT id FROM usuarios WHERE email = %s", (body.email,))
     if existe:
         raise HTTPException(400, "Email já cadastrado")
-    plano = db_one(conn, "SELECT id FROM planos WHERE nome = 'Free' LIMIT 1")
+    plano      = db_one(conn, "SELECT id FROM planos WHERE nome = 'Free' LIMIT 1")
     senha_hash = bcrypt.hashpw(body.senha.encode(), bcrypt.gensalt()).decode()
     user = db_exec(conn,
         "INSERT INTO usuarios (nome, email, senha_hash, plano_id) VALUES (%s,%s,%s,%s) RETURNING id, nome, email",
@@ -169,7 +589,7 @@ def login(body: LoginBody, conn=Depends(get_db)):
     if not bcrypt.checkpw(body.senha.encode(), user["senha_hash"].encode()):
         raise HTTPException(401, "Credenciais inválidas")
     token = criar_token(user["id"], user["email"])
-    safe = {k: v for k, v in dict(user).items() if k not in ("senha_hash",)}
+    safe  = {k: v for k, v in dict(user).items() if k != "senha_hash"}
     return {"token": token, "user": safe}
 
 @app.get("/auth/me")
@@ -213,11 +633,7 @@ def salvar_ai_config(body: AIConfigBody, user=Depends(get_current_user), conn=De
 #  CONTACTS
 # ─────────────────────────────────────────
 @app.get("/contacts")
-def listar_contacts(
-    status: Optional[str] = None,
-    user=Depends(get_current_user),
-    conn=Depends(get_db)
-):
+def listar_contacts(status: Optional[str] = None, user=Depends(get_current_user), conn=Depends(get_db)):
     if status:
         rows = db_all(conn,
             "SELECT * FROM contacts WHERE usuario_id = %s AND status = %s ORDER BY criado_em DESC",
@@ -256,10 +672,10 @@ def deletar_contact(contact_id: int, user=Depends(get_current_user), conn=Depend
 
 @app.post("/contacts/import-csv")
 async def importar_csv(file: UploadFile = File(...), user=Depends(get_current_user), conn=Depends(get_db)):
-    content = await file.read()
-    reader  = csv.DictReader(io.StringIO(content.decode("utf-8")))
+    content  = await file.read()
+    reader   = csv.DictReader(io.StringIO(content.decode("utf-8")))
     inseridos = 0
-    erros = []
+    erros     = []
     for i, row in enumerate(reader):
         try:
             telefone = row.get("telefone") or row.get("phone") or row.get("numero")
@@ -303,8 +719,7 @@ async def atualizar_status_campaign(campaign_id: int, body: ContactStatusBody, u
     db_exec(conn,
         "UPDATE campaigns SET status=%s, atualizado_em=NOW() WHERE id=%s AND usuario_id=%s",
         (body.status, campaign_id, user["id"]))
-    if body.status == 'ativa':
-        from fila import enfileirar_campanha
+    if body.status == "ativa":
         camp = db_one(conn, "SELECT * FROM campaigns WHERE id=%s AND usuario_id=%s", (campaign_id, user["id"]))
         if camp:
             await enfileirar_campanha(campaign_id, user["id"], camp["velocidade"], conn)
@@ -354,7 +769,7 @@ async def enviar_mensagem_manual(body: SendMessageBody, user=Depends(get_current
         (body.conversation_id, body.content, body.midia_url, body.midia_tipo))
     async with httpx.AsyncClient() as client:
         await client.post(f"{BAILEYS_URL}/ia-responder", json={
-            "number": conv["jid"].replace("@s.whatsapp.net", ""),
+            "number":  conv["jid"].replace("@s.whatsapp.net", ""),
             "message": body.content
         })
     return {"ok": True}
@@ -365,7 +780,6 @@ async def enviar_mensagem_manual(body: SendMessageBody, user=Depends(get_current
 @app.get("/whatsapp/status")
 def wpp_status(user=Depends(get_current_user)):
     try:
-        import httpx
         r = httpx.get(f"{BAILEYS_URL}/status", timeout=5)
         return r.json()
     except:
@@ -375,10 +789,8 @@ def wpp_status(user=Depends(get_current_user)):
 async def wpp_qrcode(user=Depends(get_current_user)):
     try:
         async with httpx.AsyncClient(timeout=5) as client:
-            r = await client.get(f"{BAILEYS_URL}/qrcode")
-            # Baileys retorna HTML com a imagem base64
+            r    = await client.get(f"{BAILEYS_URL}/qrcode")
             html = r.text
-            import re
             match = re.search(r'src="(data:image[^"]+)"', html)
             if match:
                 return {"qr": match.group(1)}
@@ -393,7 +805,7 @@ async def wpp_qrcode(user=Depends(get_current_user)):
 def analytics(user=Depends(get_current_user), conn=Depends(get_db)):
     totais = db_one(conn, """
         SELECT
-            COUNT(DISTINCT c.id)                                        AS total_contatos,
+            COUNT(DISTINCT c.id)                                           AS total_contatos,
             COUNT(DISTINCT CASE WHEN c.status != 'pendente' THEN c.id END) AS abordados,
             COUNT(DISTINCT CASE WHEN c.status = 'qualificado' THEN c.id END) AS qualificados,
             COUNT(DISTINCT CASE WHEN c.status = 'convertido'  THEN c.id END) AS convertidos
@@ -404,7 +816,7 @@ def analytics(user=Depends(get_current_user), conn=Depends(get_db)):
         FROM analytics_daily WHERE usuario_id = %s ORDER BY data DESC LIMIT 30
     """, (user["id"],))
     return {
-        "totais": dict(totais),
+        "totais":    dict(totais),
         "historico": [dict(r) for r in historico]
     }
 
@@ -413,15 +825,12 @@ def analytics(user=Depends(get_current_user), conn=Depends(get_db)):
 # ─────────────────────────────────────────
 @app.post("/webhook/mensagem")
 async def webhook_mensagem(payload: dict, conn=Depends(get_db)):
-    """
-    Baileys chama esse endpoint quando chega mensagem nova.
-    Aqui a IA decide o que responder.
-    """
-    # Importado aqui pra não circular
-    from ia import processar_mensagem
     await processar_mensagem(payload, conn)
     return {"ok": True}
 
+# ─────────────────────────────────────────
+#  ROOT
+# ─────────────────────────────────────────
 @app.get("/")
 def root():
     return {"status": "Prospector IA rodando"}
