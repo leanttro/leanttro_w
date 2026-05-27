@@ -1,0 +1,8 @@
+FROM node:20-alpine
+RUN apk add --no-cache git python3 make g++
+WORKDIR /app
+COPY baileys/package.json .
+RUN npm install
+COPY baileys/ .
+EXPOSE 3000
+CMD ["node", "index.js"]
