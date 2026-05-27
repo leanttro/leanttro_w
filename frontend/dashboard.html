@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Leanttro WPP — Dashboard</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg: #0f0f0f; --bg2: #1a1a1a; --bg3: #242424; --border: #2e2e2e;
+      --text: #f0f0f0; --text2: #888; --accent: #7c3aed; --accent2: #6d28d9;
+      --green: #22c55e; --red: #ef4444; --yellow: #f59e0b; --blue: #3b82f6;
+    }
+    body { font-family: Arial, sans-serif; background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.5; }
+
+    /* LAYOUT */
+    .app-layout { display: flex; height: 100vh; overflow: hidden; }
+
+    /* SIDEBAR */
+    .sidebar { width: 220px; background: var(--bg2); border-right: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; }
+    .sidebar-logo { padding: 20px 18px 16px; font-size: 13px; font-weight: bold; color: var(--accent); text-transform: uppercase; letter-spacing: 1px; border-bottom: 1px solid var(--border); }
+    .sidebar-nav { flex: 1; padding: 12px 0; overflow-y: auto; }
+    .nav-item { display: flex; align-items: center; gap: 10px; padding: 10px 18px; color: var(--text2); cursor: pointer; border-left: 3px solid transparent; transition: all 0.15s; font-size: 13px; }
+    .nav-item:hover { color: var(--text); background: var(--bg3); }
+    .nav-item.active { color: var(--text); background: var(--bg3); border-left-color: var(--accent); }
+    .nav-item .icon { width: 20px; text-align: center; }
+    .sidebar-user { padding: 14px 18px; border-top: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+    .sidebar-user span { font-size: 12px; color: var(--text2); }
+    .sidebar-user button { font-size: 11px; color: var(--text2); background: none; border: none; cursor: pointer; }
+    .sidebar-user button:hover { color: var(--red); }
+
+    /* MAIN */
+    .main-content { flex: 1; overflow-y: auto; display: flex; flex-direction: column; }
+    .page { display: none; flex: 1; flex-direction: column; }
+    .page.active { display: flex; }
+    .page-header { padding: 24px 28px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+    .page-header h2 { font-size: 18px; }
+    .page-header p { font-size: 13px; color: var(--text2); margin-top: 2px; }
+    .page-body { padding: 24px 28px; flex: 1; overflow-y: auto; }
+
+    /* FORMS */
+    .form-group { margin-bottom: 16px; }
+    .form-group label { display: block; font-size: 12px; color: var(--text2); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+    input, select, textarea { width: 100%; background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-family: Arial, sans-serif; font-size: 14px; padding: 10px 12px; outline: none; transition: border-color 0.2s; }
+    input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+    textarea { resize: vertical; min-height: 80px; }
+    input[type="range"] { padding: 0; height: 4px; accent-color: var(--accent); cursor: pointer; }
+    input[type="checkbox"] { width: auto; accent-color: var(--accent); cursor: pointer; }
+
+    /* BUTTONS */
+    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 9px 16px; border-radius: 6px; border: none; font-family: Arial, sans-serif; font-size: 13px; cursor: pointer; transition: opacity 0.2s; font-weight: bold; }
+    .btn:hover { opacity: 0.85; }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-secondary { background: var(--bg3); color: var(--text); border: 1px solid var(--border); }
+    .btn-danger { background: var(--red); color: #fff; }
+    .btn-success { background: var(--green); color: #000; }
+    .btn-sm { padding: 5px 10px; font-size: 12px; }
+    .btn-full { width: 100%; justify-content: center; }
+
+    /* CARDS */
+    .cards-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; margin-bottom: 24px; }
+    .card { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 18px; }
+    .card-label { font-size: 11px; color: var(--text2); text-transform: uppercase; letter-spacing: 0.5px; }
+    .card-value { font-size: 28px; font-weight: bold; margin-top: 6px; }
+    .card-value.green { color: var(--green); }
+    .card-value.yellow { color: var(--yellow); }
+    .card-value.blue { color: var(--blue); }
+
+    /* TABLES */
+    .table-wrap { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    table { width: 100%; border-collapse: collapse; }
+    thead { background: var(--bg3); }
+    th { padding: 10px 14px; text-align: left; font-size: 11px; color: var(--text2); text-transform: uppercase; letter-spacing: 0.5px; font-weight: bold; }
+    td { padding: 10px 14px; border-top: 1px solid var(--border); font-size: 13px; vertical-align: middle; }
+    tr:hover td { background: var(--bg3); }
+
+    /* BADGES */
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; text-transform: uppercase; }
+    .badge-pendente    { background: #2e2e2e; color: #888; }
+    .badge-em_contato  { background: #1e3a5f; color: #3b82f6; }
+    .badge-qualificado { background: #14532d; color: #22c55e; }
+    .badge-convertido  { background: #134e4a; color: #2dd4bf; }
+    .badge-perdido     { background: #450a0a; color: #ef4444; }
+    .badge-ativa       { background: #14532d; color: #22c55e; }
+    .badge-pausada     { background: #451a03; color: #f59e0b; }
+    .badge-rascunho    { background: #2e2e2e; color: #888; }
+    .badge-concluida   { background: #1e1b4b; color: #818cf8; }
+    .badge-ia          { background: #2e1065; color: #a855f7; }
+    .badge-manual      { background: #1e3a5f; color: #3b82f6; }
+    .badge-conectado   { background: #14532d; color: #22c55e; }
+    .badge-desconectado{ background: #450a0a; color: #ef4444; }
+
+    /* PROGRESS */
+    .progress-bar { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
+    .progress-fill { height: 100%; background: var(--accent); border-radius: 3px; }
+
+    /* MODAL */
+    .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 100; align-items: center; justify-content: center; }
+    .modal-overlay.open { display: flex; }
+    .modal { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 28px; width: 90%; max-width: 520px; max-height: 85vh; overflow-y: auto; }
+    .modal h3 { font-size: 16px; margin-bottom: 20px; }
+    .modal-footer { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
+
+    /* WPP */
+    .wpp-box { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 28px; max-width: 480px; }
+    .wpp-row { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+    .wpp-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--red); flex-shrink: 0; }
+    .wpp-dot.on { background: var(--green); }
+    .qr-wrap { margin-top: 20px; text-align: center; }
+    .qr-wrap img { max-width: 220px; border: 4px solid #fff; border-radius: 8px; }
+
+    /* CONVERSATIONS */
+    .conv-layout { display: flex; flex: 1; overflow: hidden; height: calc(100vh - 73px); }
+    .conv-list { width: 280px; border-right: 1px solid var(--border); overflow-y: auto; flex-shrink: 0; }
+    .conv-item { padding: 12px 16px; border-bottom: 1px solid var(--border); cursor: pointer; transition: background 0.15s; }
+    .conv-item:hover, .conv-item.active { background: var(--bg3); }
+    .conv-item-name { font-size: 13px; font-weight: bold; margin-bottom: 2px; }
+    .conv-item-preview { font-size: 12px; color: var(--text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .conv-item-meta { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+    .conv-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+    .conv-header { padding: 12px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+    .messages-area { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 8px; }
+    .msg-bubble { max-width: 65%; padding: 8px 12px; border-radius: 8px; font-size: 13px; line-height: 1.4; word-break: break-word; }
+    .msg-bubble.user { background: var(--bg3); border: 1px solid var(--border); align-self: flex-start; }
+    .msg-bubble.assistant { background: var(--accent2); color: #fff; align-self: flex-end; }
+    .msg-bubble img, .msg-bubble video { max-width: 200px; border-radius: 6px; display: block; margin-bottom: 4px; }
+    .msg-time { font-size: 10px; color: var(--text2); margin-top: 3px; }
+    .conv-input-area { padding: 12px 16px; border-top: 1px solid var(--border); display: flex; gap: 8px; flex-shrink: 0; }
+    .conv-input-area input { flex: 1; }
+    .conv-empty { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--text2); font-size: 13px; }
+
+    /* CONFIG GRID */
+    .config-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .config-grid .full { grid-column: 1/-1; }
+    .range-row { display: flex; align-items: center; gap: 10px; }
+    .range-row input[type="range"] { flex: 1; }
+
+    /* MISC */
+    .toggle-row { display: flex; align-items: center; gap: 12px; padding: 14px 0; }
+    .contact-check-list { max-height: 200px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; padding: 8px; background: var(--bg3); }
+    .contact-check-item { display: flex; align-items: center; gap: 8px; padding: 5px 4px; font-size: 13px; cursor: pointer; }
+    .contact-check-item:hover { background: var(--bg2); border-radius: 4px; }
+    .filter-row { display: flex; gap: 10px; align-items: center; margin-bottom: 16px; }
+    .filter-row select { width: auto; }
+    .section-title { font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text2); margin-bottom: 12px; margin-top: 24px; }
+    .section-title:first-child { margin-top: 0; }
+    hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
+    .empty-state { text-align: center; padding: 40px; color: var(--text2); font-size: 13px; }
+    a { color: var(--accent); text-decoration: none; }
+
+    /* TOAST */
+    #toast { position: fixed; bottom: 24px; right: 24px; background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; padding: 12px 18px; font-size: 13px; z-index: 999; opacity: 0; transform: translateY(10px); transition: all 0.25s; pointer-events: none; }
+    #toast.show { opacity: 1; transform: translateY(0); }
+    #toast.ok { border-left: 3px solid var(--green); }
+    #toast.err { border-left: 3px solid var(--red); }
+  </style>
+</head>
+<body>
+
+<div class="app-layout">
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">Leanttro WPP</div>
+    <nav class="sidebar-nav">
+      <div class="nav-item active" onclick="nav('wpp')"><span class="icon">📱</span> WhatsApp</div>
+      <div class="nav-item" onclick="nav('ia-config')"><span class="icon">🤖</span> Configurar IA</div>
+      <div class="nav-item" onclick="nav('groq')"><span class="icon">🔑</span> Chave IA</div>
+      <div class="nav-item" onclick="nav('contacts')"><span class="icon">👥</span> Contatos</div>
+      <div class="nav-item" onclick="nav('campaigns')"><span class="icon">📢</span> Campanhas</div>
+      <div class="nav-item" onclick="nav('conversations')"><span class="icon">💬</span> Conversas</div>
+      <div class="nav-item" onclick="nav('analytics')"><span class="icon">📊</span> Analytics</div>
+    </nav>
+    <div class="sidebar-user">
+      <span id="sidebar-nome">...</span>
+      <button onclick="logout()">Sair</button>
+    </div>
+  </aside>
+
+  <!-- MAIN -->
+  <main class="main-content">
+
+    <!-- WPP -->
+    <div class="page active" id="page-wpp">
+      <div class="page-header">
+        <div><h2>WhatsApp</h2><p>Status da conexão</p></div>
+        <button class="btn btn-secondary btn-sm" onclick="carregarWpp()">↻ Atualizar</button>
+      </div>
+      <div class="page-body">
+        <div class="wpp-box">
+          <div class="wpp-row">
+            <div class="wpp-dot" id="wpp-dot"></div>
+            <div>
+              <div id="wpp-status-txt" style="font-size:15px;font-weight:bold;">Verificando...</div>
+              <div id="wpp-numero" style="font-size:12px;color:#888;margin-top:2px;"></div>
+            </div>
+            <span class="badge badge-desconectado" id="wpp-badge" style="margin-left:auto;">—</span>
+          </div>
+          <div id="qr-wrap" style="display:none" class="qr-wrap">
+            <p style="font-size:13px;color:#888;margin-bottom:12px;">Escaneie o QR Code com o WhatsApp</p>
+            <img id="qr-img" src="" alt="QR Code" />
+            <p style="font-size:11px;color:#555;margin-top:10px;">Atualize a cada 30s se expirar</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- IA CONFIG -->
+    <div class="page" id="page-ia-config">
+      <div class="page-header">
+        <div><h2>Configurar IA</h2><p>Persona, produto e comportamento</p></div>
+        <button class="btn btn-primary btn-sm" onclick="salvarIaConfig()">Salvar</button>
+      </div>
+      <div class="page-body">
+        <div class="config-grid">
+          <div class="form-group">
+            <label>Nome da persona</label>
+            <input type="text" id="cfg-persona" placeholder="Ex: Ana" />
+          </div>
+          <div class="form-group">
+            <label>Modelo Groq</label>
+            <select id="cfg-modelo">
+              <option value="llama3-8b-8192">llama3-8b-8192</option>
+              <option value="llama3-70b-8192">llama3-70b-8192</option>
+              <option value="mixtral-8x7b-32768">mixtral-8x7b-32768</option>
+              <option value="gemma-7b-it">gemma-7b-it</option>
+            </select>
+          </div>
+          <div class="form-group full">
+            <label>Prompt do sistema</label>
+            <textarea id="cfg-prompt" rows="4" placeholder="Instruções adicionais para a IA..."></textarea>
+          </div>
+          <div class="form-group full">
+            <label>Temperatura: <span id="cfg-temp-val">0.7</span></label>
+            <div class="range-row">
+              <input type="range" id="cfg-temp" min="0" max="1" step="0.1" value="0.7" oninput="document.getElementById('cfg-temp-val').textContent=this.value" />
+            </div>
+          </div>
+
+          <div class="full"><hr /><div class="section-title">Produto</div></div>
+          <div class="form-group"><label>Nome</label><input type="text" id="cfg-prod-nome" placeholder="Ex: Software X" /></div>
+          <div class="form-group"><label>Preço</label><input type="text" id="cfg-prod-preco" placeholder="Ex: R$ 297/mês" /></div>
+          <div class="form-group full"><label>Descrição</label><textarea id="cfg-prod-desc" rows="2" placeholder="Descreva brevemente..."></textarea></div>
+
+          <div class="full"><hr /><div class="section-title">Mídia de Abertura</div></div>
+          <div class="form-group"><label>URL</label><input type="text" id="cfg-mid-ab-url" placeholder="https://..." /></div>
+          <div class="form-group"><label>Tipo</label><select id="cfg-mid-ab-tipo"><option value="imagem">Imagem</option><option value="video">Vídeo</option></select></div>
+          <div class="form-group full"><label>Caption</label><input type="text" id="cfg-mid-ab-caption" /></div>
+
+          <div class="full"><hr /><div class="section-title">Mídia de Fechamento</div></div>
+          <div class="form-group"><label>URL</label><input type="text" id="cfg-mid-fe-url" placeholder="https://..." /></div>
+          <div class="form-group"><label>Tipo</label><select id="cfg-mid-fe-tipo"><option value="imagem">Imagem</option><option value="video">Vídeo</option></select></div>
+          <div class="form-group full"><label>Caption</label><input type="text" id="cfg-mid-fe-caption" /></div>
+
+          <div class="full"><hr /><div class="section-title">Comportamento</div></div>
+          <div class="form-group full"><label>Gatilhos de parada (separados por vírgula)</label><input type="text" id="cfg-gatilhos" placeholder="não quero, para, chega, remove" /></div>
+          <div class="form-group"><label>Horário início</label><input type="time" id="cfg-h-ini" value="08:00" /></div>
+          <div class="form-group"><label>Horário fim</label><input type="time" id="cfg-h-fim" value="18:00" /></div>
+          <div class="form-group full">
+            <label>Delay entre mensagens: <span id="cfg-delay-val">3</span>s</label>
+            <div class="range-row"><input type="range" id="cfg-delay" min="1" max="30" step="1" value="3" oninput="document.getElementById('cfg-delay-val').textContent=this.value" /></div>
+          </div>
+          <div class="form-group"><label>Máx follow-ups</label><input type="number" id="cfg-max-fu" value="2" min="0" max="10" /></div>
+          <div class="form-group"><label>Intervalo follow-up (horas)</label><input type="number" id="cfg-int-fu" value="24" min="1" /></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- GROQ KEY -->
+    <div class="page" id="page-groq">
+      <div class="page-header"><div><h2>Chave IA</h2><p>Configure sua chave Groq</p></div></div>
+      <div class="page-body">
+        <div style="max-width:460px">
+          <div class="toggle-row">
+            <input type="checkbox" id="usar-propria" onchange="toggleGroqInput()" />
+            <label for="usar-propria">Usar minha chave Groq (ao invés da chave do plano)</label>
+          </div>
+          <div id="groq-key-wrap" style="display:none">
+            <div class="form-group"><label>Chave Groq</label><input type="text" id="groq-key-input" placeholder="gsk_..." /></div>
+          </div>
+          <button class="btn btn-primary" onclick="salvarGroqKey()">Salvar</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- CONTACTS -->
+    <div class="page" id="page-contacts">
+      <div class="page-header">
+        <div><h2>Contatos</h2><p id="contacts-count">0 contatos</p></div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-secondary btn-sm" onclick="document.getElementById('csv-file').click()">📥 Importar CSV</button>
+          <input type="file" id="csv-file" accept=".csv" style="display:none" onchange="importarCSV(this)" />
+          <button class="btn btn-primary btn-sm" onclick="abrirModalContato()">+ Adicionar</button>
+        </div>
+      </div>
+      <div class="page-body">
+        <div class="filter-row">
+          <select id="filtro-status" onchange="carregarContatos()">
+            <option value="">Todos</option>
+            <option value="pendente">Pendente</option>
+            <option value="em_contato">Em contato</option>
+            <option value="qualificado">Qualificado</option>
+            <option value="convertido">Convertido</option>
+            <option value="perdido">Perdido</option>
+          </select>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Nome</th><th>Telefone</th><th>Empresa</th><th>Status</th><th>Ações</th></tr></thead>
+            <tbody id="contacts-tbody"><tr><td colspan="5" class="empty-state">Carregando...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- CAMPAIGNS -->
+    <div class="page" id="page-campaigns">
+      <div class="page-header">
+        <div><h2>Campanhas</h2><p id="campaigns-count">0 campanhas</p></div>
+        <button class="btn btn-primary btn-sm" onclick="abrirModalCampanha()">+ Nova Campanha</button>
+      </div>
+      <div class="page-body">
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Nome</th><th>Status</th><th>Progresso</th><th>Velocidade</th><th>Ações</th></tr></thead>
+            <tbody id="campaigns-tbody"><tr><td colspan="5" class="empty-state">Carregando...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- CONVERSATIONS -->
+    <div class="page" id="page-conversations">
+      <div class="page-header">
+        <div><h2>Conversas</h2><p>Gerencie os atendimentos</p></div>
+        <button class="btn btn-secondary btn-sm" onclick="carregarConversas()">↻ Atualizar</button>
+      </div>
+      <div class="conv-layout">
+        <div class="conv-list" id="conv-list"><div class="empty-state">Carregando...</div></div>
+        <div class="conv-main">
+          <div class="conv-empty" id="conv-empty">← Selecione uma conversa</div>
+          <div id="conv-active" style="display:none;flex-direction:column;flex:1;overflow:hidden">
+            <div class="conv-header">
+              <div>
+                <div id="conv-header-nome" style="font-weight:bold;font-size:14px;"></div>
+                <div id="conv-header-tel" style="font-size:12px;color:#888;"></div>
+              </div>
+              <div style="display:flex;gap:8px;align-items:center">
+                <span class="badge" id="conv-modo-badge"></span>
+                <button class="btn btn-sm btn-secondary" id="conv-modo-btn" onclick="toggleModo()">Assumir</button>
+              </div>
+            </div>
+            <div class="messages-area" id="messages-area"></div>
+            <div class="conv-input-area" id="conv-input-area" style="display:none">
+              <input type="text" id="msg-input" placeholder="Digite uma mensagem..." onkeydown="if(event.key==='Enter')enviarMsg()" />
+              <button class="btn btn-primary btn-sm" onclick="enviarMsg()">Enviar</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ANALYTICS -->
+    <div class="page" id="page-analytics">
+      <div class="page-header">
+        <div><h2>Analytics</h2><p>Últimos 30 dias</p></div>
+        <button class="btn btn-secondary btn-sm" onclick="carregarAnalytics()">↻ Atualizar</button>
+      </div>
+      <div class="page-body">
+        <div class="cards-row">
+          <div class="card"><div class="card-label">Total Contatos</div><div class="card-value" id="an-total">—</div></div>
+          <div class="card"><div class="card-label">Abordados</div><div class="card-value blue" id="an-abordados">—</div></div>
+          <div class="card"><div class="card-label">Qualificados</div><div class="card-value yellow" id="an-qualificados">—</div></div>
+          <div class="card"><div class="card-label">Convertidos</div><div class="card-value green" id="an-convertidos">—</div></div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Data</th><th>Abordados</th><th>Responderam</th><th>Qualificados</th><th>Convertidos</th><th>Enviadas</th><th>Recebidas</th></tr></thead>
+            <tbody id="analytics-tbody"><tr><td colspan="7" class="empty-state">Carregando...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- MODAL CONTATO -->
+<div class="modal-overlay" id="modal-contato">
+  <div class="modal">
+    <h3 id="modal-contato-titulo">Novo Contato</h3>
+    <input type="hidden" id="contato-id" />
+    <div class="form-group"><label>Nome *</label><input type="text" id="c-nome" placeholder="Nome completo" /></div>
+    <div class="form-group"><label>Telefone *</label><input type="text" id="c-tel" placeholder="5511999999999" /></div>
+    <div class="form-group"><label>Empresa</label><input type="text" id="c-empresa" /></div>
+    <div class="form-group"><label>Cargo</label><input type="text" id="c-cargo" /></div>
+    <div class="form-group"><label>Notas</label><textarea id="c-notas" rows="2"></textarea></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="fecharModal('modal-contato')">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarContato()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL CAMPANHA -->
+<div class="modal-overlay" id="modal-campanha">
+  <div class="modal">
+    <h3>Nova Campanha</h3>
+    <div class="form-group"><label>Nome</label><input type="text" id="camp-nome" placeholder="Ex: Prospecção Maio" /></div>
+    <div class="form-group"><label>Velocidade (segundos entre envios)</label><input type="number" id="camp-velocidade" value="60" min="10" /></div>
+    <div class="form-group">
+      <label>Contatos</label>
+      <div class="contact-check-list" id="camp-contacts-list"><div style="color:#888;font-size:12px;padding:8px;">Carregando...</div></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="fecharModal('modal-campanha')">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarCampanha()">Criar</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+  const API = 'http://213.199.56.207:8000';
+  let token = localStorage.getItem('token');
+  let currentUser = JSON.parse(localStorage.getItem('user') || '{}');
+  let currentConvId = null;
+  let currentConvModo = 'ia';
+  let allContacts = [];
+
+  if (!token) window.location.href = 'login.html';
+
+  document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('sidebar-nome').textContent = currentUser.nome || currentUser.email || 'Usuário';
+    carregarWpp();
+  });
+
+  async function api(path, opts = {}) {
+    const res = await fetch(`${API}${path}`, {
+      ...opts,
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`, ...(opts.headers || {}) }
+    });
+    if (res.status === 401) { logout(); return null; }
+    return res;
+  }
+
+  function toast(msg, tipo = 'ok') {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.className = `show ${tipo}`;
+    setTimeout(() => el.className = '', 3000);
+  }
+
+  function nav(pagina) {
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+    document.getElementById(`page-${pagina}`).classList.add('active');
+    document.querySelectorAll('.nav-item').forEach(n => {
+      if (n.getAttribute('onclick') === `nav('${pagina}')`) n.classList.add('active');
+    });
+    ({ wpp: carregarWpp, 'ia-config': carregarIaConfig, groq: carregarGroqConfig, contacts: carregarContatos, campaigns: carregarCampanhas, conversations: carregarConversas, analytics: carregarAnalytics })[pagina]?.();
+  }
+
+  function abrirModal(id) { document.getElementById(id).classList.add('open'); }
+  function fecharModal(id) { document.getElementById(id).classList.remove('open'); }
+  document.addEventListener('click', e => { if (e.target.classList.contains('modal-overlay')) e.target.classList.remove('open'); });
+
+  function logout() { localStorage.clear(); window.location.href = 'login.html'; }
+  function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+  function fmtData(d) { return d ? new Date(d).toLocaleDateString('pt-BR') : '—'; }
+  function fmtHora(d) { return d ? new Date(d).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}) : ''; }
+
+  // ── WPP ──
+  async function carregarWpp() {
+    try {
+      const r = await api('/whatsapp/status');
+      const d = await r.json();
+      const connected = d.connected;
+      document.getElementById('wpp-dot').className = 'wpp-dot' + (connected ? ' on' : '');
+      document.getElementById('wpp-status-txt').textContent = connected ? 'Conectado' : 'Desconectado';
+      document.getElementById('wpp-badge').className = `badge badge-${connected ? 'conectado' : 'desconectado'}`;
+      document.getElementById('wpp-badge').textContent = connected ? 'Conectado' : 'Desconectado';
+      document.getElementById('wpp-numero').textContent = d.number ? `Número: ${d.number}` : '';
+      document.getElementById('qr-wrap').style.display = connected ? 'none' : 'block';
+      if (!connected) {
+        const qrR = await api('/whatsapp/qrcode');
+        const qrD = await qrR.json();
+        document.getElementById('qr-img').src = qrD.url;
+      }
+    } catch(e) { toast('Erro ao verificar WPP', 'err'); }
+  }
+
+  // ── IA CONFIG ──
+  async function carregarIaConfig() {
+    const r = await api('/ai-config'); if (!r) return;
+    const d = await r.json(); if (!d?.persona_nome) return;
+    const fields = { 'cfg-persona': d.persona_nome, 'cfg-modelo': d.modelo, 'cfg-prompt': d.prompt_sistema,
+      'cfg-temp': d.temperatura, 'cfg-prod-nome': d.produto_nome, 'cfg-prod-preco': d.produto_preco,
+      'cfg-prod-desc': d.produto_descricao, 'cfg-mid-ab-url': d.midia_abertura_url, 'cfg-mid-ab-tipo': d.midia_abertura_tipo,
+      'cfg-mid-ab-caption': d.midia_abertura_caption, 'cfg-mid-fe-url': d.midia_fechamento_url,
+      'cfg-mid-fe-tipo': d.midia_fechamento_tipo, 'cfg-mid-fe-caption': d.midia_fechamento_caption,
+      'cfg-gatilhos': d.gatilhos_parada, 'cfg-h-ini': d.horario_inicio, 'cfg-h-fim': d.horario_fim,
+      'cfg-delay': d.delay_mensagens, 'cfg-max-fu': d.max_followups, 'cfg-int-fu': d.intervalo_followup };
+    Object.entries(fields).forEach(([id, val]) => { if (document.getElementById(id)) document.getElementById(id).value = val || ''; });
+    document.getElementById('cfg-temp-val').textContent = d.temperatura || 0.7;
+    document.getElementById('cfg-delay-val').textContent = d.delay_mensagens || 3;
+  }
+
+  async function salvarIaConfig() {
+    const g = id => document.getElementById(id)?.value;
+    const body = {
+      persona_nome: g('cfg-persona'), modelo: g('cfg-modelo'), prompt_sistema: g('cfg-prompt'),
+      temperatura: parseFloat(g('cfg-temp')), produto_nome: g('cfg-prod-nome'), produto_preco: g('cfg-prod-preco'),
+      produto_descricao: g('cfg-prod-desc'), midia_abertura_url: g('cfg-mid-ab-url'), midia_abertura_tipo: g('cfg-mid-ab-tipo'),
+      midia_abertura_caption: g('cfg-mid-ab-caption'), midia_fechamento_url: g('cfg-mid-fe-url'),
+      midia_fechamento_tipo: g('cfg-mid-fe-tipo'), midia_fechamento_caption: g('cfg-mid-fe-caption'),
+      gatilhos_parada: g('cfg-gatilhos'), horario_inicio: g('cfg-h-ini'), horario_fim: g('cfg-h-fim'),
+      delay_mensagens: parseInt(g('cfg-delay')), max_followups: parseInt(g('cfg-max-fu')), intervalo_followup: parseInt(g('cfg-int-fu'))
+    };
+    const r = await api('/ai-config', { method: 'POST', body: JSON.stringify(body) });
+    r?.ok ? toast('Configurações salvas!') : toast('Erro ao salvar', 'err');
+  }
+
+  // ── GROQ ──
+  async function carregarGroqConfig() {
+    const r = await api('/auth/me'); if (!r) return;
+    const d = await r.json();
+    document.getElementById('usar-propria').checked = !!d.usar_ia_propria;
+    document.getElementById('groq-key-input').value = d.groq_key || '';
+    toggleGroqInput();
+  }
+  function toggleGroqInput() {
+    document.getElementById('groq-key-wrap').style.display = document.getElementById('usar-propria').checked ? 'block' : 'none';
+  }
+  async function salvarGroqKey() {
+    const usar = document.getElementById('usar-propria').checked;
+    const key = document.getElementById('groq-key-input').value.trim();
+    const r = await api('/config/groq', { method: 'PUT', body: JSON.stringify({ usar_ia_propria: usar, groq_key: key || null }) });
+    r?.ok ? toast('Chave salva!') : toast('Erro ao salvar', 'err');
+  }
+
+  // ── CONTACTS ──
+  async function carregarContatos() {
+    const status = document.getElementById('filtro-status').value;
+    const r = await api(status ? `/contacts?status=${status}` : '/contacts'); if (!r) return;
+    allContacts = await r.json();
+    document.getElementById('contacts-count').textContent = `${allContacts.length} contato${allContacts.length !== 1 ? 's' : ''}`;
+    const tbody = document.getElementById('contacts-tbody');
+    tbody.innerHTML = allContacts.length
+      ? allContacts.map(c => `<tr>
+          <td>${esc(c.nome)}</td><td>${esc(c.telefone)}</td><td>${esc(c.empresa||'—')}</td>
+          <td><span class="badge badge-${c.status}">${c.status}</span></td>
+          <td>
+            <button class="btn btn-secondary btn-sm" onclick="editarContato(${c.id})">Editar</button>
+            <button class="btn btn-danger btn-sm" style="margin-left:4px" onclick="deletarContato(${c.id})">✕</button>
+          </td>
+        </tr>`).join('')
+      : '<tr><td colspan="5" class="empty-state">Nenhum contato</td></tr>';
+  }
+
+  function abrirModalContato() {
+    document.getElementById('modal-contato-titulo').textContent = 'Novo Contato';
+    document.getElementById('contato-id').value = '';
+    ['c-nome','c-tel','c-empresa','c-cargo','c-notas'].forEach(id => document.getElementById(id).value = '');
+    abrirModal('modal-contato');
+  }
+  function editarContato(id) {
+    const c = allContacts.find(x => x.id === id); if (!c) return;
+    document.getElementById('modal-contato-titulo').textContent = 'Editar Contato';
+    document.getElementById('contato-id').value = id;
+    document.getElementById('c-nome').value = c.nome || '';
+    document.getElementById('c-tel').value = c.telefone || '';
+    document.getElementById('c-empresa').value = c.empresa || '';
+    document.getElementById('c-cargo').value = c.cargo || '';
+    document.getElementById('c-notas').value = c.notas || '';
+    abrirModal('modal-contato');
+  }
+  async function salvarContato() {
+    const id = document.getElementById('contato-id').value;
+    const body = { nome: document.getElementById('c-nome').value, telefone: document.getElementById('c-tel').value,
+      empresa: document.getElementById('c-empresa').value || null, cargo: document.getElementById('c-cargo').value || null,
+      notas: document.getElementById('c-notas').value || null };
+    if (!body.nome || !body.telefone) return toast('Nome e telefone obrigatórios', 'err');
+    const r = id
+      ? await api(`/contacts/${id}`, { method: 'PUT', body: JSON.stringify(body) })
+      : await api('/contacts', { method: 'POST', body: JSON.stringify(body) });
+    if (r?.ok) { toast(id ? 'Contato atualizado!' : 'Contato criado!'); fecharModal('modal-contato'); carregarContatos(); }
+    else toast('Erro ao salvar', 'err');
+  }
+  async function deletarContato(id) {
+    if (!confirm('Deletar este contato?')) return;
+    const r = await api(`/contacts/${id}`, { method: 'DELETE' });
+    r?.ok ? (toast('Contato removido'), carregarContatos()) : toast('Erro ao deletar', 'err');
+  }
+  async function importarCSV(input) {
+    const file = input.files[0]; if (!file) return;
+    const fd = new FormData(); fd.append('file', file);
+    const r = await fetch(`${API}/contacts/import-csv`, { method: 'POST', headers: { 'Authorization': `Bearer ${token}` }, body: fd });
+    const d = await r.json();
+    toast(`Importados: ${d.inseridos} | Erros: ${d.erros?.length || 0}`);
+    input.value = ''; carregarContatos();
+  }
+
+  // ── CAMPAIGNS ──
+  async function carregarCampanhas() {
+    const r = await api('/campaigns'); if (!r) return;
+    const data = await r.json();
+    document.getElementById('campaigns-count').textContent = `${data.length} campanha${data.length !== 1 ? 's' : ''}`;
+    const tbody = document.getElementById('campaigns-tbody');
+    tbody.innerHTML = data.length
+      ? data.map(c => {
+          const pct = c.total_contatos ? Math.round((c.enviados||0) / c.total_contatos * 100) : 0;
+          return `<tr>
+            <td>${esc(c.nome)}</td>
+            <td><span class="badge badge-${c.status}">${c.status}</span></td>
+            <td><div style="display:flex;align-items:center;gap:8px"><div class="progress-bar" style="width:100px"><div class="progress-fill" style="width:${pct}%"></div></div><span style="font-size:12px;color:#888">${c.enviados||0}/${c.total_contatos||0}</span></div></td>
+            <td style="color:#888">${c.velocidade}s</td>
+            <td>
+              ${['rascunho','pausada'].includes(c.status) ? `<button class="btn btn-success btn-sm" onclick="statusCampanha(${c.id},'ativa')">▶ Ativar</button>` : ''}
+              ${c.status==='ativa' ? `<button class="btn btn-secondary btn-sm" onclick="statusCampanha(${c.id},'pausada')">⏸ Pausar</button>` : ''}
+              ${c.status!=='concluida' ? `<button class="btn btn-secondary btn-sm" style="margin-left:4px" onclick="statusCampanha(${c.id},'concluida')">■ Encerrar</button>` : ''}
+              <button class="btn btn-danger btn-sm" style="margin-left:4px" onclick="deletarCampanha(${c.id})">✕</button>
+            </td>
+          </tr>`;
+        }).join('')
+      : '<tr><td colspan="5" class="empty-state">Nenhuma campanha</td></tr>';
+  }
+  async function abrirModalCampanha() {
+    const r = await api('/contacts');
+    const contacts = r ? await r.json() : [];
+    document.getElementById('camp-contacts-list').innerHTML = contacts.length
+      ? contacts.map(c => `<label class="contact-check-item"><input type="checkbox" value="${c.id}" /> ${esc(c.nome)} — ${esc(c.telefone)}${c.empresa ? ` (${esc(c.empresa)})` : ''}</label>`).join('')
+      : '<div style="color:#888;font-size:12px;padding:8px;">Nenhum contato disponível</div>';
+    document.getElementById('camp-nome').value = '';
+    document.getElementById('camp-velocidade').value = '60';
+    abrirModal('modal-campanha');
+  }
+  async function salvarCampanha() {
+    const nome = document.getElementById('camp-nome').value.trim();
+    if (!nome) return toast('Informe o nome', 'err');
+    const velocidade = parseInt(document.getElementById('camp-velocidade').value) || 60;
+    const contact_ids = Array.from(document.querySelectorAll('#camp-contacts-list input:checked')).map(cb => parseInt(cb.value));
+    const r = await api('/campaigns', { method: 'POST', body: JSON.stringify({ nome, velocidade, contact_ids }) });
+    if (r?.ok) { toast('Campanha criada!'); fecharModal('modal-campanha'); carregarCampanhas(); }
+    else toast('Erro ao criar', 'err');
+  }
+  async function statusCampanha(id, status) {
+    const r = await api(`/campaigns/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) });
+    r?.ok ? (toast(`Campanha ${status}!`), carregarCampanhas()) : toast('Erro', 'err');
+  }
+  async function deletarCampanha(id) {
+    if (!confirm('Deletar esta campanha?')) return;
+    const r = await api(`/campaigns/${id}`, { method: 'DELETE' });
+    r?.ok ? (toast('Removida'), carregarCampanhas()) : toast('Erro', 'err');
+  }
+
+  // ── CONVERSATIONS ──
+  async function carregarConversas() {
+    const r = await api('/conversations'); if (!r) return;
+    const data = await r.json();
+    const lista = document.getElementById('conv-list');
+    lista.innerHTML = data.length
+      ? data.map(c => `
+          <div class="conv-item ${currentConvId===c.id?'active':''}" onclick="abrirConversa(${c.id},'${esc(c.contact_nome||c.jid)}','${esc(c.contact_telefone||'')}','${c.modo}')">
+            <div class="conv-item-meta"><span class="conv-item-name">${esc(c.contact_nome||c.jid)}</span><span class="badge badge-${c.modo}">${c.modo}</span></div>
+            <div class="conv-item-preview">${esc(c.contact_telefone||c.jid)}</div>
+          </div>`).join('')
+      : '<div class="empty-state">Nenhuma conversa</div>';
+  }
+  async function abrirConversa(id, nome, tel, modo) {
+    currentConvId = id; currentConvModo = modo;
+    document.getElementById('conv-empty').style.display = 'none';
+    document.getElementById('conv-active').style.display = 'flex';
+    document.getElementById('conv-header-nome').textContent = nome;
+    document.getElementById('conv-header-tel').textContent = tel;
+    atualizarModoBadge(modo);
+    carregarConversas();
+    const r = await api(`/conversations/${id}/messages`); if (!r) return;
+    renderizarMensagens(await r.json());
+  }
+  function renderizarMensagens(msgs) {
+    const area = document.getElementById('messages-area');
+    area.innerHTML = msgs.length
+      ? msgs.map(m => {
+          let conteudo = '';
+          if (m.midia_url) conteudo = m.midia_tipo==='video' ? `<video src="${esc(m.midia_url)}" controls></video>` : `<img src="${esc(m.midia_url)}" alt="imagem" />`;
+          if (m.content) conteudo += `<div>${esc(m.content)}</div>`;
+          return `<div class="msg-bubble ${m.role}">${conteudo}<div class="msg-time">${fmtHora(m.timestamp)}</div></div>`;
+        }).join('')
+      : '<div style="color:#555;font-size:13px;text-align:center;margin-top:20px">Sem mensagens</div>';
+    area.scrollTop = area.scrollHeight;
+  }
+  function atualizarModoBadge(modo) {
+    document.getElementById('conv-modo-badge').className = `badge badge-${modo}`;
+    document.getElementById('conv-modo-badge').textContent = modo === 'ia' ? 'IA' : 'Manual';
+    document.getElementById('conv-modo-btn').textContent = modo === 'ia' ? 'Assumir' : 'Devolver pra IA';
+    document.getElementById('conv-input-area').style.display = modo === 'manual' ? 'flex' : 'none';
+  }
+  async function toggleModo() {
+    if (!currentConvId) return;
+    const novoModo = currentConvModo === 'ia' ? 'manual' : 'ia';
+    const r = await api(`/conversations/${currentConvId}/modo`, { method: 'PATCH', body: JSON.stringify({ modo: novoModo }) });
+    if (r?.ok) { currentConvModo = novoModo; atualizarModoBadge(novoModo); toast(`Modo: ${novoModo}`); carregarConversas(); }
+  }
+  async function enviarMsg() {
+    const input = document.getElementById('msg-input');
+    const content = input.value.trim();
+    if (!content || !currentConvId) return;
+    const r = await api('/conversations/send', { method: 'POST', body: JSON.stringify({ conversation_id: currentConvId, content }) });
+    if (r?.ok) {
+      input.value = '';
+      const msgs = await (await api(`/conversations/${currentConvId}/messages`)).json();
+      renderizarMensagens(msgs);
+    } else toast('Erro ao enviar', 'err');
+  }
+
+  // ── ANALYTICS ──
+  async function carregarAnalytics() {
+    const r = await api('/analytics'); if (!r) return;
+    const d = await r.json();
+    document.getElementById('an-total').textContent = d.totais?.total_contatos ?? '—';
+    document.getElementById('an-abordados').textContent = d.totais?.abordados ?? '—';
+    document.getElementById('an-qualificados').textContent = d.totais?.qualificados ?? '—';
+    document.getElementById('an-convertidos').textContent = d.totais?.convertidos ?? '—';
+    const tbody = document.getElementById('analytics-tbody');
+    tbody.innerHTML = d.historico?.length
+      ? d.historico.map(h => `<tr>
+          <td>${fmtData(h.data)}</td><td>${h.abordados||0}</td><td>${h.responderam||0}</td>
+          <td>${h.qualificados||0}</td><td>${h.convertidos||0}</td>
+          <td>${h.msgs_enviadas||0}</td><td>${h.msgs_recebidas||0}</td>
+        </tr>`).join('')
+      : '<tr><td colspan="7" class="empty-state">Sem dados ainda</td></tr>';
+  }
+</script>
+</body>
+</html>
