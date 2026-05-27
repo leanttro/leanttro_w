@@ -486,7 +486,7 @@
       if (!connected) {
         const qrR = await api('/whatsapp/qrcode');
         const qrD = await qrR.json();
-        document.getElementById('qr-img').src = qrD.url;
+        document.getElementById('qr-img').src = qrD.qr || '';
       }
     } catch(e) { toast('Erro ao verificar WPP', 'err'); }
   }
