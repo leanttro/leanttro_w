@@ -3,7 +3,9 @@ version: '3.8'
 services:
 
   baileys:
-    build: ./baileys
+    build:
+      context: .
+      dockerfile: Dockerfile.baileys
     restart: always
     ports:
       - "3001:3000"
@@ -14,7 +16,9 @@ services:
       - API_WEBHOOK_URL=http://api:8000/webhook/mensagem
 
   api:
-    build: ./api
+    build:
+      context: .
+      dockerfile: Dockerfile.api
     restart: always
     ports:
       - "8000:8000"
@@ -28,7 +32,9 @@ services:
       - REDIS_URL=redis://redis:6379
 
   worker:
-    build: ./api
+    build:
+      context: .
+      dockerfile: Dockerfile.api
     restart: always
     command: python fila.py
     depends_on:
@@ -40,7 +46,9 @@ services:
       - REDIS_URL=redis://redis:6379
 
   frontend:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
     restart: always
     ports:
       - "8080:80"
