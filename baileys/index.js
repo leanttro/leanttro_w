@@ -156,14 +156,31 @@ async function connectToWhatsApp() {
             // ── Envia para a IA do Prospector ──────────────────────────────────
             const usuarioId = parseInt(process.env.USUARIO_ID || '1')
             try {
+                // Resolve @lid para número real (@s.whatsapp.net)
+                // O Baileys entrega JID @lid para contas Business; precisamos do número real
+                let jidResolvido = remoteJid
+                if (remoteJid.endsWith('@lid')) {
+                    try {
+                        const resultado = await sock.onWhatsApp(remoteJid)
+                        if (resultado && resultado[0]?.jid) {
+                            jidResolvido = resultado[0].jid
+                            console.log(`🔄 LID resolvido: ${remoteJid} → ${jidResolvido}`)
+                        } else {
+                            console.log(`⚠️ Não foi possível resolver LID ${remoteJid} — usando LID mesmo`)
+                        }
+                    } catch (e) {
+                        console.log(`⚠️ Erro ao resolver LID ${remoteJid}: ${e.message} — usando LID mesmo`)
+                    }
+                }
+
                 await axios.post(process.env.API_WEBHOOK_URL || 'http://api:8000/webhook/mensagem', {
                     usuario_id: usuarioId,
-                    remoteJid,
+                    remoteJid: jidResolvido,
                     pushName,
                     text,
                     fromMe
                 })
-                console.log(`📨 Webhook enviado para IA (usuario_id=${usuarioId}) | ${remoteJid}`)
+                console.log(`📨 Webhook enviado para IA (usuario_id=${usuarioId}) | ${jidResolvido}`)
             } catch (e) {
                 console.error('Erro ao chamar webhook IA:', e.message)
             }
