@@ -263,7 +263,7 @@ async def enviar_whatsapp(numero: str, texto: str = None, midia_url: str = None,
             payload["videoUrl"] = midia_url
         else:
             payload["imageUrl"] = midia_url
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with httpx.AsyncClient(timeout=45) as client:
         await client.post(f"{BAILEYS_URL}/disparar", json=payload)
 
 # ─────────────────────────────────────────
@@ -358,7 +358,11 @@ async def processar_mensagem(payload: dict, conn):
     delay = int(cfg.get("delay_mensagens") or 3)
     await asyncio.sleep(min(delay, 10))
 
-    await enviar_whatsapp(numero, texto=resposta)
+    try:
+        await enviar_whatsapp(numero, texto=resposta)
+    except Exception as e:
+        print(f"⚠️ Timeout/erro ao enviar resposta IA para {numero}: {e}")
+        return
 
     db_exec(conn,
         "INSERT INTO messages (conversation_id, role, content) VALUES (%s,'assistant',%s)",
