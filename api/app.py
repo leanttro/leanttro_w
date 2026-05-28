@@ -30,6 +30,15 @@ REDIS_URL       = os.getenv("REDIS_URL", "redis://redis:6379")
 GROQ_API_URL    = "https://api.groq.com/openai/v1/chat/completions"
 GATILHOS_PARADA_PADRAO = ["não quero", "nao quero", "para", "chega", "sai", "remove", "cancelar"]
 
+# Modelos Groq em ordem de preferência (fallback automático)
+GROQ_MODELOS_FALLBACK = [
+    "llama3-8b-8192",
+    "llama-3.1-8b-instant",
+    "llama-3.3-70b-versatile",
+    "mixtral-8x7b-32768",
+    "gemma2-9b-it",
+]
+
 # ─────────────────────────────────────────
 #  BANCO
 # ─────────────────────────────────────────
@@ -204,17 +213,48 @@ async def chamar_groq(system_prompt: str, historico: list, groq_key: str, temper
         "Authorization": f"Bearer {groq_key}",
         "Content-Type": "application/json"
     }
-    payload = {
-        "model": modelo or "llama3-8b-8192",
-        "temperature": float(temperatura or 0.7),
-        "max_tokens": 500,
-        "messages": messages
-    }
+
+    # Monta lista de modelos: tenta o configurado primeiro, depois os fallbacks
+    modelos_para_tentar = []
+    if modelo and modelo not in GROQ_MODELOS_FALLBACK:
+        modelos_para_tentar.append(modelo)
+    elif modelo:
+        modelos_para_tentar.append(modelo)
+    for m in GROQ_MODELOS_FALLBACK:
+        if m not in modelos_para_tentar:
+            modelos_para_tentar.append(m)
+
+    ultimo_erro = None
     async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(GROQ_API_URL, headers=headers, json=payload)
-        resp.raise_for_status()
-        data = resp.json()
-        return data["choices"][0]["message"]["content"].strip()
+        for m in modelos_para_tentar:
+            payload = {
+                "model": m,
+                "temperature": float(temperatura or 0.7),
+                "max_tokens": 500,
+                "messages": messages
+            }
+            try:
+                resp = await client.post(GROQ_API_URL, headers=headers, json=payload)
+                if resp.status_code == 400:
+                    erro_body = resp.json()
+                    print(f"⚠️ Modelo {m} retornou 400: {erro_body.get('error', {}).get('message', '')} — tentando próximo...")
+                    ultimo_erro = erro_body
+                    continue
+                resp.raise_for_status()
+                data = resp.json()
+                if m != modelo:
+                    print(f"✅ Usando modelo fallback: {m}")
+                return data["choices"][0]["message"]["content"].strip()
+            except httpx.HTTPStatusError as e:
+                print(f"⚠️ Erro HTTP com modelo {m}: {e} — tentando próximo...")
+                ultimo_erro = str(e)
+                continue
+            except Exception as e:
+                print(f"⚠️ Erro inesperado com modelo {m}: {e} — tentando próximo...")
+                ultimo_erro = str(e)
+                continue
+
+    raise Exception(f"Todos os modelos Groq falharam. Último erro: {ultimo_erro}")
 
 async def enviar_whatsapp(numero: str, texto: str = None, midia_url: str = None, midia_tipo: str = None, caption: str = None):
     payload = {"number": numero, "message": texto or caption or ""}
@@ -622,6 +662,10 @@ def salvar_groq_key(body: GroqKeyBody, user=Depends(get_current_user), conn=Depe
 # ─────────────────────────────────────────
 #  AI CONFIG
 # ─────────────────────────────────────────
+@app.get("/ai-config/modelos")
+def listar_modelos(user=Depends(get_current_user)):
+    return {"modelos": GROQ_MODELOS_FALLBACK}
+
 @app.get("/ai-config")
 def get_ai_config(user=Depends(get_current_user), conn=Depends(get_db)):
     cfg = db_one(conn, "SELECT * FROM ai_config WHERE usuario_id = %s", (user["id"],))
