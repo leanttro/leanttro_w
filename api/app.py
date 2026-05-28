@@ -378,32 +378,45 @@ Regras: seja natural, curto (máx 3 linhas), não pareça spam, personalize pelo
 
 
 async def processar_contato_campanha(campaign_id: int, contact_id: int, usuario_id: int):
+    print(f"🚀 Processando campaign={campaign_id} contact={contact_id} usuario={usuario_id}")
     conn = get_conn_raw()
     try:
         usuario = dict(db_one(conn, "SELECT * FROM usuarios WHERE id=%s", (usuario_id,)))
         cfg     = dict(db_one(conn, "SELECT * FROM ai_config WHERE usuario_id=%s", (usuario_id,)) or {})
         contato = dict(db_one(conn, "SELECT * FROM contacts WHERE id=%s", (contact_id,)) or {})
 
+        print(f"📋 contato={contato.get('nome')} cfg={bool(cfg)}")
+
         if not contato or not cfg:
+            print("⚠️ Contato ou config vazio — abortando")
             return
 
         agora = datetime.now().time()
         try:
             h_ini = time.fromisoformat(str(cfg.get("horario_inicio", "08:00")))
             h_fim = time.fromisoformat(str(cfg.get("horario_fim", "18:00")))
+            print(f"🕐 agora={agora} janela={h_ini}-{h_fim}")
             if not (h_ini <= agora <= h_fim):
+                print("⏰ Fora do horário — aguardando")
                 await asyncio.sleep(1800)
-        except:
-            pass
+        except Exception as e:
+            print(f"⚠️ Erro horário: {e}")
 
         numero = contato["telefone"].strip().replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
         if not numero.startswith("+"):
             numero = "55" + numero
+        print(f"📱 Número: {numero}")
 
         groq_key = usuario.get("groq_key") if usuario.get("usar_ia_propria") else GROQ_API_KEY
+        print(f"🔑 Groq key ok: {bool(groq_key)}")
 
+        print("🤖 Gerando mensagem abertura...")
         msg_abertura = await gerar_mensagem_abertura(cfg, contato, groq_key)
+        print(f"✅ Mensagem: {msg_abertura[:60]}")
+
+        print(f"📤 Enviando via Baileys...")
         await enviar_whatsapp(numero, texto=msg_abertura)
+        print("✅ Enviado!")
 
         if cfg.get("midia_abertura_url"):
             await asyncio.sleep(2)
