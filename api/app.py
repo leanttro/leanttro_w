@@ -32,11 +32,12 @@ GATILHOS_PARADA_PADRAO = ["não quero", "nao quero", "para", "chega", "sai", "re
 
 # Modelos Groq em ordem de preferência (fallback automático)
 GROQ_MODELOS_FALLBACK = [
-    "llama3-8b-8192",
-    "llama-3.1-8b-instant",
-    "llama-3.3-70b-versatile",
-    "mixtral-8x7b-32768",
-    "gemma2-9b-it",
+    "llama-3.1-8b-instant",       # rápido, estável
+    "llama-3.3-70b-versatile",    # mais capaz
+    "gemma2-9b-it",               # fallback adicional
+    # modelos abaixo removidos (decommissioned pela Groq):
+    # "llama3-8b-8192"
+    # "mixtral-8x7b-32768"
 ]
 
 # ─────────────────────────────────────────
@@ -278,7 +279,7 @@ async def processar_mensagem(payload: dict, conn):
     if from_me or not texto or not usuario_id:
         return
 
-    numero = jid.replace("@s.whatsapp.net", "")
+    numero = jid.replace("@s.whatsapp.net", "").replace("@lid", "")
 
     usuario = db_one(conn, "SELECT * FROM usuarios WHERE id = %s", (usuario_id,))
     if not usuario:
@@ -604,7 +605,7 @@ async def worker_followups():
                 if not cfg:
                     continue
 
-                numero   = fu["jid"].replace("@s.whatsapp.net", "")
+                numero   = fu["jid"].replace("@s.whatsapp.net", "").replace("@lid", "")
                 groq_key = usuario.get("groq_key") if usuario.get("usar_ia_propria") else GROQ_API_KEY
 
                 persona = cfg.get("persona_nome") or "Assistente"
@@ -857,7 +858,7 @@ async def enviar_mensagem_manual(body: SendMessageBody, user=Depends(get_current
         (body.conversation_id, body.content, body.midia_url, body.midia_tipo))
     async with httpx.AsyncClient() as client:
         await client.post(f"{BAILEYS_URL}/ia-responder", json={
-            "number":  conv["jid"].replace("@s.whatsapp.net", ""),
+            "number":  conv["jid"].replace("@s.whatsapp.net", "").replace("@lid", ""),
             "message": body.content
         })
     return {"ok": True}
