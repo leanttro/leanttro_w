@@ -528,6 +528,49 @@ async def processar_contato_campanha(campaign_id: int, contact_id: int, usuario_
         groq_key = usuario.get("groq_key") if usuario.get("usar_ia_propria") else GROQ_API_KEY
         print(f"🔑 Groq key ok: {bool(groq_key)}")
 
+        jid = f"{numero}@s.whatsapp.net"
+        sufixo = numero[-9:]
+
+        # Verifica se já existe conversa ativa com este contato (evita reapresentação)
+        conv_existente = db_one(conn,
+            "SELECT * FROM conversations WHERE usuario_id=%s AND contact_id=%s AND status='ativa' ORDER BY criado_em DESC LIMIT 1",
+            (usuario_id, contact_id))
+
+        if conv_existente:
+            conv_existente = dict(conv_existente)
+            print(f"♻️ Conversa ativa já existe (id={conv_existente['id']}) — gerando continuação ao invés de apresentação")
+
+            # Busca histórico e gera mensagem de continuação (não apresentação)
+            historico = db_all(conn,
+                "SELECT role, content FROM messages WHERE conversation_id=%s ORDER BY timestamp ASC",
+                (conv_existente["id"],))
+            historico = [dict(h) for h in historico]
+
+            historico_cont = historico + [{"role": "user", "content": "[INSTRUÇÃO INTERNA: Retome o contato de forma natural e breve, sem se reapresentar. A pessoa já conhece você. Apenas dê continuidade à conversa.]"}]
+
+            system_prompt = montar_system_prompt(cfg, usuario)
+            temperatura   = float(cfg.get("temperatura") or 0.7)
+            modelo        = cfg.get("modelo") or "llama-3.1-8b-instant"
+
+            try:
+                msg_cont = await chamar_groq(system_prompt, historico_cont, groq_key, temperatura, modelo)
+            except Exception as e:
+                print(f"⚠️ Erro ao gerar continuação: {e} — abortando envio")
+                return
+
+            await enviar_whatsapp(numero, texto=msg_cont)
+            db_exec(conn,
+                "INSERT INTO messages (conversation_id, role, content) VALUES (%s,'assistant',%s)",
+                (conv_existente["id"], msg_cont))
+            db_exec(conn,
+                "UPDATE campaigns SET enviados=enviados+1, atualizado_em=NOW() WHERE id=%s",
+                (campaign_id,))
+            db_exec(conn,
+                "UPDATE campaign_contacts SET status='enviado', enviado_em=NOW() WHERE campaign_id=%s AND contact_id=%s",
+                (campaign_id, contact_id))
+            return
+
+        # Sem conversa prévia — gera mensagem de abertura normal
         print("🤖 Gerando mensagem abertura...")
         msg_abertura = await gerar_mensagem_abertura(cfg, contato, groq_key)
         print(f"✅ Mensagem: {msg_abertura[:60]}")
@@ -545,7 +588,6 @@ async def processar_contato_campanha(campaign_id: int, contact_id: int, usuario_
                 caption=cfg.get("midia_abertura_caption")
             )
 
-        jid  = f"{numero}@s.whatsapp.net"
         conv = db_exec(conn,
             "INSERT INTO conversations (usuario_id, contact_id, campaign_id, jid, status, modo) VALUES (%s,%s,%s,%s,'ativa','ia') RETURNING *",
             (usuario_id, contact_id, campaign_id, jid))
@@ -635,7 +677,7 @@ async def worker_followups():
         conn = get_conn_raw()
         try:
             pendentes = db_all(conn, """
-                SELECT f.*, c.jid, c.usuario_id
+                SELECT f.*, c.jid, c.usuario_id, c.status as conv_status
                 FROM followups f
                 JOIN conversations c ON c.id = f.conversation_id
                 WHERE f.enviado = FALSE AND f.agendado_para <= NOW()
@@ -645,6 +687,38 @@ async def worker_followups():
 
             for fu in pendentes:
                 fu      = dict(fu)
+
+                # Se a conversa foi encerrada, cancela o follow-up silenciosamente
+                if fu.get("conv_status") == "encerrada":
+                    db_exec(conn, "UPDATE followups SET enviado=TRUE, enviado_em=NOW() WHERE id=%s", (fu["id"],))
+                    print(f"⏭️ Follow-up {fu['id']} cancelado — conversa encerrada")
+                    continue
+
+                # Verifica se a pessoa já respondeu APÓS o último envio da IA
+                ultima_msg_user = db_one(conn, """
+                    SELECT id FROM messages
+                    WHERE conversation_id=%s AND role='user'
+                    ORDER BY timestamp DESC LIMIT 1
+                """, (fu["conversation_id"],))
+
+                ultima_msg_ia = db_one(conn, """
+                    SELECT timestamp FROM messages
+                    WHERE conversation_id=%s AND role='assistant'
+                    ORDER BY timestamp DESC LIMIT 1
+                """, (fu["conversation_id"],))
+
+                # Se a pessoa respondeu depois da última mensagem da IA, não manda follow-up
+                if ultima_msg_user and ultima_msg_ia:
+                    msg_user_row = db_one(conn, """
+                        SELECT timestamp FROM messages
+                        WHERE conversation_id=%s AND role='user'
+                        ORDER BY timestamp DESC LIMIT 1
+                    """, (fu["conversation_id"],))
+                    if msg_user_row and msg_user_row["timestamp"] > ultima_msg_ia["timestamp"]:
+                        db_exec(conn, "UPDATE followups SET enviado=TRUE, enviado_em=NOW() WHERE id=%s", (fu["id"],))
+                        print(f"⏭️ Follow-up {fu['id']} cancelado — pessoa já respondeu")
+                        continue
+
                 usuario = dict(db_one(conn, "SELECT * FROM usuarios WHERE id=%s", (fu["usuario_id"],)) or {})
                 cfg     = dict(db_one(conn, "SELECT * FROM ai_config WHERE usuario_id=%s", (fu["usuario_id"],)) or {})
 
@@ -654,9 +728,28 @@ async def worker_followups():
                 numero   = fu["jid"].replace("@s.whatsapp.net", "").replace("@lid", "")
                 groq_key = usuario.get("groq_key") if usuario.get("usar_ia_propria") else GROQ_API_KEY
 
-                persona = cfg.get("persona_nome") or "Assistente"
-                produto = cfg.get("produto_nome") or "nosso serviço"
-                msg_fu  = f"Oi! Sou {persona}. Queria saber se você teve chance de pensar na proposta que te enviei sobre {produto}. Posso te ajudar com alguma dúvida? 😊"
+                # Busca histórico da conversa para gerar follow-up contextualizado
+                historico = db_all(conn,
+                    "SELECT role, content FROM messages WHERE conversation_id=%s ORDER BY timestamp ASC",
+                    (fu["conversation_id"],))
+                historico = [dict(h) for h in historico]
+
+                # Gera follow-up com IA usando o histórico real da conversa
+                try:
+                    system_prompt = montar_system_prompt(cfg, usuario)
+                    temperatura   = float(cfg.get("temperatura") or 0.7)
+                    modelo        = cfg.get("modelo") or "llama-3.1-8b-instant"
+
+                    # Adiciona instrução de follow-up no histórico sem alterar o system prompt
+                    historico_fu = historico + [{"role": "user", "content": "[INSTRUÇÃO INTERNA: A pessoa não respondeu ainda. Mande um follow-up curto e natural, sem repetir a apresentação. Apenas retome o contato de forma leve, como se fosse uma mensagem humana.]"}]
+
+                    msg_fu = await chamar_groq(system_prompt, historico_fu, groq_key, temperatura, modelo)
+                    print(f"✅ Follow-up gerado para conv={fu['conversation_id']}: {msg_fu[:60]}")
+                except Exception as e:
+                    print(f"⚠️ Erro ao gerar follow-up com IA, usando mensagem padrão: {e}")
+                    persona = cfg.get("persona_nome") or "Assistente"
+                    produto = cfg.get("produto_nome") or "nosso serviço"
+                    msg_fu  = f"Oi! Queria saber se você teve chance de pensar no que conversamos sobre {produto}. Posso te ajudar com alguma dúvida? 😊"
 
                 try:
                     await enviar_whatsapp(numero, texto=msg_fu)
