@@ -21,6 +21,7 @@ const io = new Server(httpServer, {
 const TYPEBOT_URL = process.env.TYPEBOT_URL
 let sockGlobal
 let lastQR = null   // ← guarda o último QR gerado
+const lidMap = {}   // mapa LID → JID real (ex: "123...@lid" → "5511...@s.whatsapp.net")
 
 // =====================================================================
 // ROTA QR CODE — acesse no navegador: http://SEU_IP:3001/qrcode
@@ -98,6 +99,27 @@ async function connectToWhatsApp() {
 
     sock.ev.on('creds.update', saveCreds)
 
+    // Constrói mapa LID → número real para resolver @lid nas mensagens recebidas
+    sock.ev.on('contacts.upsert', (contacts) => {
+        for (const c of contacts) {
+            if (c.lid && c.id) {
+                lidMap[c.lid] = c.id
+            }
+            // também indexa o próprio JID caso venha como lid no futuro
+            if (c.id && c.id.endsWith('@lid') && c.notify) {
+                lidMap[c.id] = c.id
+            }
+        }
+    })
+
+    sock.ev.on('contacts.update', (updates) => {
+        for (const c of updates) {
+            if (c.lid && c.id) {
+                lidMap[c.lid] = c.id
+            }
+        }
+    })
+
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         if (type !== 'notify') return
         const msg = messages[0]
@@ -157,19 +179,25 @@ async function connectToWhatsApp() {
             const usuarioId = parseInt(process.env.USUARIO_ID || '1')
             try {
                 // Resolve @lid para número real (@s.whatsapp.net)
-                // O Baileys entrega JID @lid para contas Business; precisamos do número real
+                // Tenta primeiro o mapa local (contacts.upsert), depois onWhatsApp()
                 let jidResolvido = remoteJid
                 if (remoteJid.endsWith('@lid')) {
-                    try {
-                        const resultado = await sock.onWhatsApp(remoteJid)
-                        if (resultado && resultado[0]?.jid) {
-                            jidResolvido = resultado[0].jid
-                            console.log(`🔄 LID resolvido: ${remoteJid} → ${jidResolvido}`)
-                        } else {
-                            console.log(`⚠️ Não foi possível resolver LID ${remoteJid} — usando LID mesmo`)
+                    if (lidMap[remoteJid]) {
+                        jidResolvido = lidMap[remoteJid]
+                        console.log(`🔄 LID resolvido (mapa): ${remoteJid} → ${jidResolvido}`)
+                    } else {
+                        try {
+                            const resultado = await sock.onWhatsApp(remoteJid)
+                            if (resultado && resultado[0]?.jid) {
+                                jidResolvido = resultado[0].jid
+                                lidMap[remoteJid] = jidResolvido  // cacheia pra próxima
+                                console.log(`🔄 LID resolvido (onWhatsApp): ${remoteJid} → ${jidResolvido}`)
+                            } else {
+                                console.log(`⚠️ LID não resolvido ${remoteJid} — usando LID mesmo`)
+                            }
+                        } catch (e) {
+                            console.log(`⚠️ Erro ao resolver LID ${remoteJid}: ${e.message} — usando LID mesmo`)
                         }
-                    } catch (e) {
-                        console.log(`⚠️ Erro ao resolver LID ${remoteJid}: ${e.message} — usando LID mesmo`)
                     }
                 }
 
