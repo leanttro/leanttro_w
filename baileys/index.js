@@ -239,7 +239,8 @@ app.post('/disparar', async (req, res) => {
         const { number, message, image, videoUrl } = req.body
         if (!sockGlobal) return res.status(503).json({ error: "WhatsApp não conectado." })
         if (!number || !message) return res.status(400).json({ error: "Número e mensagem são obrigatórios." })
-        const jid = `${number}@s.whatsapp.net`
+        // Se vier JID completo (com @), usa direto; senão monta com @s.whatsapp.net
+        const jid = number.includes('@') ? number : `${number}@s.whatsapp.net`
         await sockGlobal.sendPresenceUpdate('composing', jid)
         await new Promise(r => setTimeout(r, 1500))
         if (videoUrl) {
