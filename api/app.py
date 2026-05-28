@@ -113,7 +113,7 @@ class AIConfigBody(BaseModel):
     persona_nome: Optional[str] = "Assistente"
     prompt_sistema: Optional[str] = None
     temperatura: Optional[float] = 0.7
-    modelo: Optional[str] = "llama3-8b-8192"
+    modelo: Optional[str] = "llama-3.1-8b-instant"
     produto_nome: Optional[str] = None
     produto_descricao: Optional[str] = None
     produto_preco: Optional[str] = None
@@ -271,60 +271,89 @@ async def enviar_whatsapp(numero: str, texto: str = None, midia_url: str = None,
 #  IA — processador de mensagens (ex ia.py)
 # ─────────────────────────────────────────
 async def processar_mensagem(payload: dict, conn):
+    print(f"📨 Webhook recebido: {json.dumps({k: v for k, v in payload.items() if k != 'image'})}")
+
     usuario_id = payload.get("usuario_id")
     jid        = payload.get("remoteJid", "")
     texto      = payload.get("text", "") or ""
     from_me    = payload.get("fromMe", False)
 
-    if from_me or not texto or not usuario_id:
+    if from_me:
+        print("⏭️  Ignorando mensagem própria (fromMe=True)")
+        return
+    if not texto:
+        print("⏭️  Ignorando mensagem sem texto")
+        return
+    if not usuario_id:
+        print(f"🔴 ERRO CRÍTICO: usuario_id ausente no payload! Chaves recebidas: {list(payload.keys())}")
         return
 
-    numero = jid.replace("@s.whatsapp.net", "").replace("@lid", "")
+    # Normaliza o número extraindo apenas os dígitos (ignora @s.whatsapp.net, @lid, etc.)
+    numero = re.sub(r"@.*", "", jid)
 
     usuario = db_one(conn, "SELECT * FROM usuarios WHERE id = %s", (usuario_id,))
     if not usuario:
+        print(f"🔴 usuario_id={usuario_id} não encontrado no banco")
         return
     usuario = dict(usuario)
 
     cfg = db_one(conn, "SELECT * FROM ai_config WHERE usuario_id = %s", (usuario_id,))
     if not cfg:
+        print(f"🔴 ai_config não encontrada para usuario_id={usuario_id}")
         return
     cfg = dict(cfg)
 
     # Verifica horário de funcionamento
     agora = datetime.now().time()
     try:
-        h_ini = time.fromisoformat(str(cfg.get("horario_inicio", "08:00")))
-        h_fim = time.fromisoformat(str(cfg.get("horario_fim", "18:00")))
+        h_ini_raw = cfg.get("horario_inicio")
+        h_fim_raw = cfg.get("horario_fim")
+        h_ini = h_ini_raw if isinstance(h_ini_raw, time) else time.fromisoformat(str(h_ini_raw or "08:00"))
+        h_fim = h_fim_raw if isinstance(h_fim_raw, time) else time.fromisoformat(str(h_fim_raw or "18:00"))
         if not (h_ini <= agora <= h_fim):
+            print(f"⏰ Fora do horário ({h_ini}–{h_fim}), agora={agora} — ignorando")
             return
-    except:
-        pass
+    except Exception as e:
+        print(f"⚠️  Erro ao verificar horário: {e} — continuando sem restrição")
 
-    # Busca ou cria conversa
-    conv = db_one(conn, "SELECT * FROM conversations WHERE usuario_id=%s AND jid=%s", (usuario_id, jid))
+    # Busca conversa existente pelo número (ignora variações de sufixo @lid/@s.whatsapp.net)
+    # Isso evita criar conversas duplicadas quando o Baileys alterna entre sufixos
+    conv = db_one(conn,
+        "SELECT * FROM conversations WHERE usuario_id=%s AND jid LIKE %s ORDER BY criado_em DESC LIMIT 1",
+        (usuario_id, f"{numero}%"))
+
     if not conv:
-        contact = db_one(conn, "SELECT id FROM contacts WHERE usuario_id=%s AND telefone=%s", (usuario_id, numero))
+        print(f"🆕 Nova conversa para {numero}")
+        contact = db_one(conn, "SELECT id FROM contacts WHERE usuario_id=%s AND telefone LIKE %s", (usuario_id, f"%{numero[-9:]}%"))
         contact_id = contact["id"] if contact else None
         conv = db_exec(conn,
             "INSERT INTO conversations (usuario_id, contact_id, jid, status, modo) VALUES (%s,%s,%s,'ativa','ia') RETURNING *",
             (usuario_id, contact_id, jid))
+    else:
+        print(f"♻️  Conversa existente id={conv['id']} para {numero}")
+        # Atualiza o JID caso tenha mudado de @lid para @s.whatsapp.net ou vice-versa
+        if conv["jid"] != jid:
+            print(f"🔄 JID atualizado: {conv['jid']} → {jid}")
+            db_exec(conn, "UPDATE conversations SET jid=%s WHERE id=%s", (jid, conv["id"]))
     conv = dict(conv)
 
     if conv.get("modo") == "manual":
+        print(f"👤 Conversa {conv['id']} em modo manual — IA pausada")
         return
 
     db_exec(conn,
         "INSERT INTO messages (conversation_id, role, content) VALUES (%s,'user',%s)",
         (conv["id"], texto))
+    print(f"💬 Mensagem salva. conv={conv['id']} texto='{texto[:60]}'")
 
     if checar_gatilho_parada(texto, cfg.get("gatilhos_parada", "")):
+        print(f"🛑 Gatilho de parada detectado para {numero}")
         db_exec(conn,
             "UPDATE conversations SET status='encerrada', atualizado_em=NOW() WHERE id=%s",
             (conv["id"],))
         db_exec(conn,
-            "UPDATE contacts SET status='perdido', atualizado_em=NOW() WHERE usuario_id=%s AND telefone=%s",
-            (usuario_id, numero))
+            "UPDATE contacts SET status='perdido', atualizado_em=NOW() WHERE usuario_id=%s AND telefone LIKE %s",
+            (usuario_id, f"%{numero[-9:]}%"))
         return
 
     ultima_nossa = db_one(conn,
@@ -334,8 +363,8 @@ async def processar_mensagem(payload: dict, conn):
         tel_resp = checar_telefone_na_resposta(texto)
         if tel_resp:
             db_exec(conn,
-                "UPDATE contacts SET responsavel_telefone=%s, atualizado_em=NOW() WHERE usuario_id=%s AND telefone=%s",
-                (tel_resp, usuario_id, numero))
+                "UPDATE contacts SET responsavel_telefone=%s, atualizado_em=NOW() WHERE usuario_id=%s AND telefone LIKE %s",
+                (tel_resp, usuario_id, f"%{numero[-9:]}%"))
             db_exec(conn,
                 "INSERT INTO contacts (usuario_id, nome, telefone, notas, status) VALUES (%s,%s,%s,%s,'pendente') ON CONFLICT DO NOTHING",
                 (usuario_id, "Responsável via " + numero, tel_resp, f"Indicado por {numero}"))
@@ -348,12 +377,14 @@ async def processar_mensagem(payload: dict, conn):
     groq_key      = get_groq_key(usuario)
     system_prompt = montar_system_prompt(cfg, usuario)
     temperatura   = float(cfg.get("temperatura") or 0.7)
-    modelo        = cfg.get("modelo") or "llama3-8b-8192"
+    modelo        = cfg.get("modelo") or "llama-3.1-8b-instant"
 
+    print(f"🤖 Chamando Groq modelo={modelo} conv={conv['id']}")
     try:
         resposta = await chamar_groq(system_prompt, historico, groq_key, temperatura, modelo)
+        print(f"✅ Groq respondeu: '{resposta[:60]}'")
     except Exception as e:
-        print(f"Erro Groq: {e}")
+        print(f"🔴 Erro Groq conv={conv['id']}: {e}")
         return
 
     delay = int(cfg.get("delay_mensagens") or 3)
@@ -406,7 +437,7 @@ Crie uma PRIMEIRA mensagem de prospecção no WhatsApp para {nome}{f' da empresa
 Ofereça: {produto}
 Regras: seja natural, curto (máx 3 linhas), não pareça spam, personalize pelo nome/empresa."""
 
-    modelo_cfg = cfg.get("modelo") or "llama3-8b-8192"
+    modelo_cfg = cfg.get("modelo") or "llama-3.1-8b-instant"
     modelos_para_tentar = [modelo_cfg]
     for m in GROQ_MODELOS_FALLBACK:
         if m not in modelos_para_tentar:
