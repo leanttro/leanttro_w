@@ -401,20 +401,47 @@ Crie uma PRIMEIRA mensagem de prospecção no WhatsApp para {nome}{f' da empresa
 Ofereça: {produto}
 Regras: seja natural, curto (máx 3 linhas), não pareça spam, personalize pelo nome/empresa."""
 
+    modelo_cfg = cfg.get("modelo") or "llama3-8b-8192"
+    modelos_para_tentar = [modelo_cfg]
+    for m in GROQ_MODELOS_FALLBACK:
+        if m not in modelos_para_tentar:
+            modelos_para_tentar.append(m)
+
     headers = {"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"}
-    payload = {
-        "model": cfg.get("modelo") or "llama3-8b-8192",
-        "temperature": float(cfg.get("temperatura") or 0.7),
-        "max_tokens": 200,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user",   "content": "Gere a mensagem de abertura agora."}
-        ]
-    }
+    ultimo_erro = None
+
     async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(GROQ_API_URL, headers=headers, json=payload)
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"].strip()
+        for m in modelos_para_tentar:
+            payload = {
+                "model": m,
+                "temperature": float(cfg.get("temperatura") or 0.7),
+                "max_tokens": 200,
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user",   "content": "Gere a mensagem de abertura agora."}
+                ]
+            }
+            try:
+                resp = await client.post(GROQ_API_URL, headers=headers, json=payload)
+                if resp.status_code == 400:
+                    erro_body = resp.json()
+                    print(f"⚠️ [abertura] Modelo {m} retornou 400: {erro_body.get('error', {}).get('message', '')} — tentando próximo...")
+                    ultimo_erro = erro_body
+                    continue
+                resp.raise_for_status()
+                if m != modelo_cfg:
+                    print(f"✅ [abertura] Usando modelo fallback: {m}")
+                return resp.json()["choices"][0]["message"]["content"].strip()
+            except httpx.HTTPStatusError as e:
+                print(f"⚠️ [abertura] Erro HTTP com modelo {m}: {e} — tentando próximo...")
+                ultimo_erro = str(e)
+                continue
+            except Exception as e:
+                print(f"⚠️ [abertura] Erro inesperado com modelo {m}: {e} — tentando próximo...")
+                ultimo_erro = str(e)
+                continue
+
+    raise Exception(f"[abertura] Todos os modelos Groq falharam. Último erro: {ultimo_erro}")
 
 
 async def processar_contato_campanha(campaign_id: int, contact_id: int, usuario_id: int):
