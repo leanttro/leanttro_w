@@ -220,10 +220,10 @@
           <div class="form-group">
             <label>Modelo Groq</label>
             <select id="cfg-modelo">
-              <option value="llama3-8b-8192">llama3-8b-8192</option>
-              <option value="llama3-70b-8192">llama3-70b-8192</option>
-              <option value="mixtral-8x7b-32768">mixtral-8x7b-32768</option>
-              <option value="gemma-7b-it">gemma-7b-it</option>
+              <option value="llama-3.1-8b-instant">llama-3.1-8b-instant (rápido)</option>
+              <option value="llama-3.3-70b-versatile">llama-3.3-70b-versatile (mais capaz)</option>
+              
+              <option value="gemma2-9b-it">gemma2-9b-it</option>
             </select>
           </div>
           <div class="form-group full">
@@ -434,6 +434,9 @@
   document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('sidebar-nome').textContent = currentUser.nome || currentUser.email || 'Usuário';
     carregarWpp();
+    carregarCampanhas();
+    carregarContatos();
+    carregarConversas();
   });
 
   async function api(path, opts = {}) {
@@ -494,7 +497,7 @@
   // ── IA CONFIG ──
   async function carregarIaConfig() {
     const r = await api('/ai-config'); if (!r) return;
-    const d = await r.json(); if (!d?.persona_nome) return;
+    const d = await r.json(); if (!d || typeof d !== 'object') return;
     const fields = { 'cfg-persona': d.persona_nome, 'cfg-modelo': d.modelo, 'cfg-prompt': d.prompt_sistema,
       'cfg-temp': d.temperatura, 'cfg-prod-nome': d.produto_nome, 'cfg-prod-preco': d.produto_preco,
       'cfg-prod-desc': d.produto_descricao, 'cfg-mid-ab-url': d.midia_abertura_url, 'cfg-mid-ab-tipo': d.midia_abertura_tipo,
