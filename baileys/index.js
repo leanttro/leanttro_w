@@ -149,43 +149,46 @@ async function connectToWhatsApp() {
         }
 
         if (!fromMe && text) {
+            // ── Envia para a IA do Prospector ──────────────────────────────────
+            const usuarioId = parseInt(process.env.USUARIO_ID || '1')
             try {
                 await axios.post(process.env.API_WEBHOOK_URL || 'http://api:8000/webhook/mensagem', {
-                    usuario_id: 1,
+                    usuario_id: usuarioId,
                     remoteJid,
                     pushName,
                     text,
                     fromMe
                 })
+                console.log(`📨 Webhook enviado para IA (usuario_id=${usuarioId}) | ${remoteJid}`)
             } catch (e) {
-                console.error('Erro ao chamar webhook:', e.message)
+                console.error('Erro ao chamar webhook IA:', e.message)
             }
-        }
 
-        if (fromMe) return
-        if (!text) return
-
-        try {
-            const { data } = await axios.post(TYPEBOT_URL, { message: text, remoteJid })
-            if (data.messages && data.messages.length > 0) {
-                for (const message of data.messages) {
-                    await sock.sendPresenceUpdate('composing', remoteJid)
-                    await new Promise(r => setTimeout(r, 800))
-                    if (message.type === 'text') {
-                        const responseText = message.content.richText.map(n => n.children.map(c => c.text).join('')).join('\n')
-                        await sock.sendMessage(remoteJid, { text: responseText })
-                        io.emit('nova_mensagem', { remoteJid, text: responseText, fromMe: true })
-                    } else if (message.type === 'image') {
-                        await sock.sendMessage(remoteJid, { image: { url: message.content.url } })
-                        io.emit('nova_mensagem', { remoteJid, text: 'Imagem enviada', fromMe: true })
-                    } else if (message.type === 'audio') {
-                        await sock.sendMessage(remoteJid, { audio: { url: message.content.url }, mimetype: 'audio/mp4', ptt: true })
-                        io.emit('nova_mensagem', { remoteJid, text: 'Áudio enviado', fromMe: true })
+            // ── Typebot (só roda se TYPEBOT_URL estiver configurado E USAR_TYPEBOT=true) ──
+            if (TYPEBOT_URL && process.env.USAR_TYPEBOT === 'true') {
+                try {
+                    const { data } = await axios.post(TYPEBOT_URL, { message: text, remoteJid })
+                    if (data.messages && data.messages.length > 0) {
+                        for (const message of data.messages) {
+                            await sock.sendPresenceUpdate('composing', remoteJid)
+                            await new Promise(r => setTimeout(r, 800))
+                            if (message.type === 'text') {
+                                const responseText = message.content.richText.map(n => n.children.map(c => c.text).join('')).join('\n')
+                                await sock.sendMessage(remoteJid, { text: responseText })
+                                io.emit('nova_mensagem', { remoteJid, text: responseText, fromMe: true })
+                            } else if (message.type === 'image') {
+                                await sock.sendMessage(remoteJid, { image: { url: message.content.url } })
+                                io.emit('nova_mensagem', { remoteJid, text: 'Imagem enviada', fromMe: true })
+                            } else if (message.type === 'audio') {
+                                await sock.sendMessage(remoteJid, { audio: { url: message.content.url }, mimetype: 'audio/mp4', ptt: true })
+                                io.emit('nova_mensagem', { remoteJid, text: 'Áudio enviado', fromMe: true })
+                            }
+                        }
                     }
+                } catch (error) {
+                    console.error('❌ ERRO NA INTEGRAÇÃO COM TYPEBOT:', error.response?.data || error.message)
                 }
             }
-        } catch (error) {
-            console.error('❌ ERRO NA INTEGRAÇÃO COM TYPEBOT:', error.response?.data || error.message)
         }
     })
 }
