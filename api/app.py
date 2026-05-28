@@ -200,6 +200,7 @@ Instruções importantes:
 - Seja breve nas mensagens (máximo 3 parágrafos)
 - Nunca mande listas longas ou textos enormes
 - Se a pessoa pedir para parar, agradeça e encerre
+- Use APENAS as informações que foram fornecidas acima. Se algum dado não estiver disponível, simplesmente não o mencione. NUNCA use colchetes, placeholders ou termos como [nome da empresa], [produto], [valor] — se não tiver a informação, ignore esse ponto na conversa.
 
 {prompt}"""
     return base.strip()
@@ -328,9 +329,14 @@ async def processar_mensagem(payload: dict, conn):
         print(f"🆕 Nova conversa para {numero_puro}")
         contact = db_one(conn, "SELECT id FROM contacts WHERE usuario_id=%s AND telefone LIKE %s", (usuario_id, f"%{numero_puro[-9:]}%"))
         contact_id = contact["id"] if contact else None
+        # Se o contato não existe na base (não foi adicionado pelo usuário),
+        # cria a conversa em modo MANUAL — a IA só assume conversas iniciadas por campanha
+        modo_inicial = "ia" if contact_id else "manual"
+        if modo_inicial == "manual":
+            print(f"👤 Contato {numero_puro} não está na base — conversa criada em modo MANUAL")
         conv = db_exec(conn,
-            "INSERT INTO conversations (usuario_id, contact_id, jid, status, modo) VALUES (%s,%s,%s,'ativa','ia') RETURNING *",
-            (usuario_id, contact_id, jid))
+            "INSERT INTO conversations (usuario_id, contact_id, jid, status, modo) VALUES (%s,%s,%s,'ativa',%s) RETURNING *",
+            (usuario_id, contact_id, jid, modo_inicial))
     else:
         print(f"♻️  Conversa existente id={conv['id']} para {numero_puro}")
         # Atualiza o JID caso tenha mudado de @lid para @s.whatsapp.net ou vice-versa
