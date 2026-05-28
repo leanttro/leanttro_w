@@ -834,3 +834,76 @@ async def webhook_mensagem(payload: dict, conn=Depends(get_db)):
 @app.get("/")
 def root():
     return {"status": "Prospector IA rodando"}
+
+# ─────────────────────────────────────────
+#  ADMIN — gerenciamento de usuários
+# ─────────────────────────────────────────
+ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "admin-token-troque-em-producao")
+
+def check_admin(x_admin_token: str = ""):
+    if x_admin_token != ADMIN_TOKEN:
+        raise HTTPException(status_code=403, detail="Acesso negado")
+
+class AdminCreateUserBody(BaseModel):
+    nome: str
+    email: str
+    senha: str
+    plano_nome: Optional[str] = "Free"
+
+class AdminAtivoBody(BaseModel):
+    ativo: bool
+
+class AdminPlanoBody(BaseModel):
+    plano_nome: str
+
+@app.get("/admin/usuarios")
+def admin_listar_usuarios(x_admin_token: str = "", conn=Depends(get_db)):
+    check_admin(x_admin_token)
+    rows = db_all(conn, """
+        SELECT u.id, u.nome, u.email, u.ativo, u.criado_em,
+               p.nome as plano_nome
+        FROM usuarios u
+        LEFT JOIN planos p ON p.id = u.plano_id
+        ORDER BY u.criado_em DESC
+    """)
+    return [dict(r) for r in rows]
+
+@app.post("/admin/usuarios")
+def admin_criar_usuario(body: AdminCreateUserBody, x_admin_token: str = "", conn=Depends(get_db)):
+    check_admin(x_admin_token)
+    existe = db_one(conn, "SELECT id FROM usuarios WHERE email = %s", (body.email,))
+    if existe:
+        raise HTTPException(400, "Email já cadastrado")
+    plano = db_one(conn, "SELECT id FROM planos WHERE nome = %s LIMIT 1", (body.plano_nome,))
+    senha_hash = bcrypt.hashpw(body.senha.encode(), bcrypt.gensalt()).decode()
+    user = db_exec(conn,
+        "INSERT INTO usuarios (nome, email, senha_hash, plano_id, ativo) VALUES (%s,%s,%s,%s,TRUE) RETURNING id, nome, email",
+        (body.nome, body.email, senha_hash, plano["id"] if plano else None))
+    return dict(user)
+
+@app.patch("/admin/usuarios/{user_id}/ativo")
+def admin_toggle_ativo(user_id: int, body: AdminAtivoBody, x_admin_token: str = "", conn=Depends(get_db)):
+    check_admin(x_admin_token)
+    db_exec(conn, "UPDATE usuarios SET ativo=%s WHERE id=%s", (body.ativo, user_id))
+    return {"ok": True}
+
+@app.patch("/admin/usuarios/{user_id}/plano")
+def admin_trocar_plano(user_id: int, body: AdminPlanoBody, x_admin_token: str = "", conn=Depends(get_db)):
+    check_admin(x_admin_token)
+    plano = db_one(conn, "SELECT id FROM planos WHERE nome = %s LIMIT 1", (body.plano_nome,))
+    if not plano:
+        raise HTTPException(404, "Plano não encontrado")
+    db_exec(conn, "UPDATE usuarios SET plano_id=%s WHERE id=%s", (plano["id"], user_id))
+    return {"ok": True}
+
+@app.delete("/admin/usuarios/{user_id}")
+def admin_deletar_usuario(user_id: int, x_admin_token: str = "", conn=Depends(get_db)):
+    check_admin(x_admin_token)
+    db_exec(conn, "DELETE FROM usuarios WHERE id=%s", (user_id,))
+    return {"ok": True}
+
+@app.get("/admin/planos")
+def admin_listar_planos(x_admin_token: str = "", conn=Depends(get_db)):
+    check_admin(x_admin_token)
+    rows = db_all(conn, "SELECT * FROM planos ORDER BY id")
+    return [dict(r) for r in rows]
