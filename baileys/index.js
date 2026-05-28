@@ -103,6 +103,10 @@ async function connectToWhatsApp() {
         const msg = messages[0]
 
         const remoteJid = msg.key.remoteJid
+
+        // Ignora grupos (@g.us) — responde APENAS no privado
+        if (remoteJid.endsWith('@g.us')) return
+
         const pushName  = msg.pushName || ''
         const fromMe    = msg.key.fromMe || false
 
