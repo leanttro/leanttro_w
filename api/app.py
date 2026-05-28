@@ -290,9 +290,15 @@ async def processar_mensagem(payload: dict, conn):
         return
 
     # Mantém o JID completo para envio correto (@lid ou @s.whatsapp.net)
-    # O número puro é usado apenas para buscas no banco
+    # O número puro é usado para buscas no banco (ignora sufixo @lid/@s.whatsapp.net)
     numero = jid  # envia o JID completo ao Baileys
     numero_puro = re.sub(r"@.*", "", jid)
+
+    # Normaliza: remove prefixo "1" de números BR com 13 dígitos (ex: 5511... vs 55011...)
+    # O WhatsApp às vezes envia "1" extra antes do DDD para números BR
+    numero_puro_normalizado = numero_puro
+    if len(numero_puro) == 13 and numero_puro.startswith("1"):
+        numero_puro_normalizado = numero_puro[1:]  # 119516088529026 → 19516088529026
 
     usuario = db_one(conn, "SELECT * FROM usuarios WHERE id = %s", (usuario_id,))
     if not usuario:
@@ -319,15 +325,17 @@ async def processar_mensagem(payload: dict, conn):
     except Exception as e:
         print(f"⚠️  Erro ao verificar horário: {e} — continuando sem restrição")
 
-    # Busca conversa existente pelo número (ignora variações de sufixo @lid/@s.whatsapp.net)
-    # Isso evita criar conversas duplicadas quando o Baileys alterna entre sufixos
+    # Busca conversa existente pelo número puro (últimos 9 dígitos),
+    # ignorando variações de sufixo (@lid vs @s.whatsapp.net) e prefixo "1" extra do WhatsApp.
+    # Ex: "119516088529026@lid" e "5511951608852@s.whatsapp.net" têm os mesmos 9 dígitos finais.
+    sufixo_busca = numero_puro_normalizado[-9:]
     conv = db_one(conn,
-        "SELECT * FROM conversations WHERE usuario_id=%s AND jid LIKE %s ORDER BY criado_em DESC LIMIT 1",
-        (usuario_id, f"{numero}%"))
+        "SELECT * FROM conversations WHERE usuario_id=%s AND regexp_replace(jid, '@.*', '') LIKE %s ORDER BY criado_em DESC LIMIT 1",
+        (usuario_id, f"%{sufixo_busca}"))
 
     if not conv:
-        print(f"🆕 Nova conversa para {numero_puro}")
-        contact = db_one(conn, "SELECT id FROM contacts WHERE usuario_id=%s AND telefone LIKE %s", (usuario_id, f"%{numero_puro[-9:]}%"))
+        print(f"🆕 Nova conversa para {numero_puro} (normalizado: {numero_puro_normalizado})")
+        contact = db_one(conn, "SELECT id FROM contacts WHERE usuario_id=%s AND telefone LIKE %s", (usuario_id, f"%{sufixo_busca}%"))
         contact_id = contact["id"] if contact else None
         # Se o contato não existe na base, ignora completamente — IA não responde desconhecidos
         if not contact_id:
