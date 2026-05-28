@@ -303,7 +303,7 @@ async def processar_mensagem(payload: dict, conn):
         return
     cfg = dict(cfg)
 
-    # Verifica horário de funcionamento
+    # Verifica horário de funcionamento (usa TZ do sistema; configure TZ=America/Sao_Paulo no container)
     agora = datetime.now().time()
     try:
         h_ini_raw = cfg.get("horario_inicio")
