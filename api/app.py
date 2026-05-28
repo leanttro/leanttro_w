@@ -469,8 +469,8 @@ async def processar_contato_campanha(campaign_id: int, contact_id: int, usuario_
         except Exception as e:
             print(f"⚠️ Erro horário: {e}")
 
-        numero = contato["telefone"].strip().replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
-        if not numero.startswith("+"):
+        numero = contato["telefone"].strip().replace(" ", "").replace("-", "").replace("(", "").replace(")", "").replace("+", "")
+        if not numero.startswith("55"):
             numero = "55" + numero
         print(f"📱 Número: {numero}")
 
