@@ -258,7 +258,7 @@ async def chamar_groq(system_prompt: str, historico: list, groq_key: str, temper
     raise Exception(f"Todos os modelos Groq falharam. Último erro: {ultimo_erro}")
 
 async def enviar_whatsapp(numero: str, texto: str = None, midia_url: str = None, midia_tipo: str = None, caption: str = None):
-    payload = {"number": numero, "message": texto or caption or ""}
+    payload = {"number": numero, "message": texto or caption or "", "useFullJid": True}
     if midia_url:
         if midia_tipo == "video":
             payload["videoUrl"] = midia_url
@@ -288,8 +288,10 @@ async def processar_mensagem(payload: dict, conn):
         print(f"🔴 ERRO CRÍTICO: usuario_id ausente no payload! Chaves recebidas: {list(payload.keys())}")
         return
 
-    # Normaliza o número extraindo apenas os dígitos (ignora @s.whatsapp.net, @lid, etc.)
-    numero = re.sub(r"@.*", "", jid)
+    # Mantém o JID completo para envio correto (@lid ou @s.whatsapp.net)
+    # O número puro é usado apenas para buscas no banco
+    numero = jid  # envia o JID completo ao Baileys
+    numero_puro = re.sub(r"@.*", "", jid)
 
     usuario = db_one(conn, "SELECT * FROM usuarios WHERE id = %s", (usuario_id,))
     if not usuario:
@@ -323,14 +325,14 @@ async def processar_mensagem(payload: dict, conn):
         (usuario_id, f"{numero}%"))
 
     if not conv:
-        print(f"🆕 Nova conversa para {numero}")
-        contact = db_one(conn, "SELECT id FROM contacts WHERE usuario_id=%s AND telefone LIKE %s", (usuario_id, f"%{numero[-9:]}%"))
+        print(f"🆕 Nova conversa para {numero_puro}")
+        contact = db_one(conn, "SELECT id FROM contacts WHERE usuario_id=%s AND telefone LIKE %s", (usuario_id, f"%{numero_puro[-9:]}%"))
         contact_id = contact["id"] if contact else None
         conv = db_exec(conn,
             "INSERT INTO conversations (usuario_id, contact_id, jid, status, modo) VALUES (%s,%s,%s,'ativa','ia') RETURNING *",
             (usuario_id, contact_id, jid))
     else:
-        print(f"♻️  Conversa existente id={conv['id']} para {numero}")
+        print(f"♻️  Conversa existente id={conv['id']} para {numero_puro}")
         # Atualiza o JID caso tenha mudado de @lid para @s.whatsapp.net ou vice-versa
         if conv["jid"] != jid:
             print(f"🔄 JID atualizado: {conv['jid']} → {jid}")
@@ -347,13 +349,13 @@ async def processar_mensagem(payload: dict, conn):
     print(f"💬 Mensagem salva. conv={conv['id']} texto='{texto[:60]}'")
 
     if checar_gatilho_parada(texto, cfg.get("gatilhos_parada", "")):
-        print(f"🛑 Gatilho de parada detectado para {numero}")
+        print(f"🛑 Gatilho de parada detectado para {numero_puro}")
         db_exec(conn,
             "UPDATE conversations SET status='encerrada', atualizado_em=NOW() WHERE id=%s",
             (conv["id"],))
         db_exec(conn,
             "UPDATE contacts SET status='perdido', atualizado_em=NOW() WHERE usuario_id=%s AND telefone LIKE %s",
-            (usuario_id, f"%{numero[-9:]}%"))
+            (usuario_id, f"%{numero_puro[-9:]}%"))
         return
 
     ultima_nossa = db_one(conn,
@@ -364,10 +366,10 @@ async def processar_mensagem(payload: dict, conn):
         if tel_resp:
             db_exec(conn,
                 "UPDATE contacts SET responsavel_telefone=%s, atualizado_em=NOW() WHERE usuario_id=%s AND telefone LIKE %s",
-                (tel_resp, usuario_id, f"%{numero[-9:]}%"))
+                (tel_resp, usuario_id, f"%{numero_puro[-9:]}%"))
             db_exec(conn,
                 "INSERT INTO contacts (usuario_id, nome, telefone, notas, status) VALUES (%s,%s,%s,%s,'pendente') ON CONFLICT DO NOTHING",
-                (usuario_id, "Responsável via " + numero, tel_resp, f"Indicado por {numero}"))
+                (usuario_id, "Responsável via " + numero_puro, tel_resp, f"Indicado por {numero_puro}"))
 
     historico = db_all(conn,
         "SELECT role, content FROM messages WHERE conversation_id=%s ORDER BY timestamp ASC",
